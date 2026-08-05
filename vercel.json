@@ -1,4 +1,6 @@
 {
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
   "functions": {
     "api/analyze.js": { "maxDuration": 30 },
     "api/auth.js": { "maxDuration": 10 }
