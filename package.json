@@ -4,7 +4,12 @@
   "private": true,
   "type": "module",
   "description": "FE Content Audit - YMYL/E-E-A-T and Google HCS content auditing tool",
+  "scripts": {
+    "build": "node build.js"
+  },
   "dependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/plugin-transform-react-jsx": "^7.27.1",
     "@supabase/supabase-js": "^2.45.4"
   }
 }
