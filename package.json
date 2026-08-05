@@ -1,0 +1,10 @@
+{
+  "name": "fe-content-audit",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "FE Content Audit - YMYL/E-E-A-T and Google HCS content auditing tool",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4"
+  }
+}

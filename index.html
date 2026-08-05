@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>FE Content Audit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f4ede4; font-family: 'Inter', system-ui, sans-serif; color: #1d1d1d; }
+  #root { max-width: 800px; margin: 0 auto; padding: 32px 20px 80px; }
+  .login-wrap { max-width: 380px; margin: 100px auto; text-align: center; }
+  input[type=text], input[type=number], input[type=password], textarea {
+    border: 1px solid #e6e6e6; border-radius: 4px; padding: 10px 12px; font-family: inherit; font-size: 14px; color: #1d1d1d;
+  }
+  textarea { width: 100%; font-family: monospace; font-size: 12px; }
+  button { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState } = React;
+
+const C = {
+  primary: "#4a154b", onPrimary: "#ffffff", ink: "#1d1d1d", inkMute: "#696969",
+  linkBlue: "#1264a3", canvas: "#ffffff", cream: "#f4ede4", lavender: "#f9f0ff",
+  hairline: "#e6e6e6", error: "#cc4117", success: "#007a5a",
+  errorTint: "#fbe9e3", successTint: "#e3f2ec", warnTint: "#fdf3e3", warn: "#a9660a",
+};
+
+const st = {
+  h1: { fontSize: "32px", fontWeight: 700, color: C.primary, margin: "0 0 4px" },
+  subtitle: { fontSize: "16px", color: C.inkMute, margin: "0 0 20px", lineHeight: 1.55 },
+  card: { background: C.canvas, border: `1px solid ${C.hairline}`, borderRadius: "16px", padding: "24px", marginBottom: "16px" },
+  cardLavender: { background: C.lavender, border: `1px solid ${C.hairline}`, borderRadius: "16px", padding: "24px", marginBottom: "16px" },
+  stepTitle: { fontSize: "22px", fontWeight: 600, margin: "0 0 4px" },
+  stepDesc: { fontSize: "14px", color: C.inkMute, margin: "0 0 14px", lineHeight: 1.5 },
+  btnPrimary: { background: C.primary, color: C.onPrimary, border: "none", borderRadius: "90px", padding: "14px 28px", fontSize: "16px", fontWeight: 700, cursor: "pointer" },
+  btnOutline: { background: C.canvas, color: C.primary, border: `2px solid ${C.primary}`, borderRadius: "90px", padding: "9px 20px", fontSize: "14px", fontWeight: 700, cursor: "pointer" },
+  btnOutlineError: { background: C.canvas, color: C.error, border: `2px solid ${C.error}`, borderRadius: "90px", padding: "9px 20px", fontSize: "14px", fontWeight: 700, cursor: "pointer" },
+  link: { color: C.linkBlue, textDecoration: "underline", fontSize: "13px", fontFamily: "monospace", wordBreak: "break-all", display: "block" },
+  pillTag: { fontSize: "12px", fontWeight: 700, padding: "6px 16px", borderRadius: "90px", background: C.lavender, color: C.primary, border: "none", cursor: "pointer" },
+  pillTagActive: { fontSize: "12px", fontWeight: 700, padding: "6px 16px", borderRadius: "90px", background: C.primary, color: C.onPrimary, border: "none", cursor: "pointer" },
+  pillTagBad: { fontSize: "12px", fontWeight: 700, padding: "6px 16px", borderRadius: "90px", background: C.errorTint, color: C.error, border: "none", cursor: "pointer" },
+  caption: { fontSize: "12px", color: C.inkMute },
+};
+
+const SESSION_KEY = "fe_session_token";
+const SESSION_EXPIRY_KEY = "fe_session_expires";
+const MEMORY_KEY = "fe_saved_analyses";
+
+function getStoredSession() {
+  const token = sessionStorage.getItem(SESSION_KEY);
+  const expiresAt = Number(sessionStorage.getItem(SESSION_EXPIRY_KEY) || 0);
+  if (!token || Date.now() > expiresAt) return null;
+  return token;
+}
+function storeSession(token, expiresAt) {
+  sessionStorage.setItem(SESSION_KEY, token);
+  sessionStorage.setItem(SESSION_EXPIRY_KEY, String(expiresAt));
+}
+function clearSession() {
+  sessionStorage.removeItem(SESSION_KEY);
+  sessionStorage.removeItem(SESSION_EXPIRY_KEY);
+}
+
+function getSavedAnalyses() {
+  try { return JSON.parse(localStorage.getItem(MEMORY_KEY) || "[]"); } catch (e) { return []; }
+}
+function addSavedAnalysis(entry) {
+  const list = getSavedAnalyses();
+  list.unshift(entry);
+  localStorage.setItem(MEMORY_KEY, JSON.stringify(list.slice(0, 50)));
+}
+function deleteSavedAnalysis(timestamp) {
+  const list = getSavedAnalyses().filter((e) => e.timestamp !== timestamp);
+  localStorage.setItem(MEMORY_KEY, JSON.stringify(list));
+}
+
+async function login(password) {
+  const res = await fetch("/api/auth", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Login failed");
+  storeSession(data.token, data.expiresAt);
+}
+
+async function callAnalyzeApi(article, mode) {
+  const token = getStoredSession();
+  if (!token) throw new Error("Session expired. Please log in again.");
+  const response = await fetch("/api/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ article, mode }),
+  });
+  if (response.status === 401) { clearSession(); throw new Error("Session expired. Please log in again."); }
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    throw new Error(errBody.error || `Request failed with status ${response.status}`);
+  }
+  return response.json();
+}
+
+function detectWpRestError(parsed) {
+  if (parsed && typeof parsed === "object" && parsed.code && parsed.data?.status) {
+    return { status: parsed.data.status, code: parsed.code };
+  }
+  return null;
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return "no date";
+  const d = new Date(dateStr.replace(" ", "T"));
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) + ", " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function normalizeArticles(raw, segment) {
+  try {
+    if (Array.isArray(raw?.list?.[0]?.items)) {
+      return raw.list[0].items.map((it) => ({
+        id: String(it.id), headline: it.headline || it.title, subheading: it.introduction,
+        byline: (it.byline || []).map((b) => b.name).join(", "), publish_date: it.post_date,
+        body_text: it.body_raw || it.body, url: it.post_url, segment,
+      }));
+    }
+  } catch (e) { return []; }
+  return [];
+}
+
+function downloadCsv(rows, filename) {
+  const esc = (v) => { const s = String(v ?? ""); return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s; };
+  const header = ["segment", "headline", "url", "byline", "publish_date", "verdict", "top_finding", "why_it_hurts", "fix", "ymyl_score", "experience", "expertise", "authoritativeness", "trustworthiness", "information_gain_score", "spam_risk"];
+  const lines = [header.join(",")];
+  rows.forEach((r) => lines.push(header.map((h) => esc(r[h])).join(",")));
+  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function LoginScreen({ onSuccess }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError(""); setLoading(true);
+    try { await login(password); onSuccess(); }
+    catch (err) { setError(err.message); }
+    setLoading(false);
+  }
+
+  return (
+    <div className="login-wrap">
+      <h1 style={st.h1}>FE Content Audit</h1>
+      <p style={st.subtitle}>Enter the team password to continue.</p>
+      <form onSubmit={handleSubmit}>
+        <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus style={{ width: "100%", marginBottom: "12px" }} />
+        <button style={{ ...st.btnPrimary, width: "100%" }} type="submit" disabled={loading}>{loading ? "Checking..." : "Log in"}</button>
+      </form>
+      {error && <p style={{ color: C.error, fontSize: "13px", marginTop: "10px" }}>{error}</p>}
+    </div>
+  );
+}
+
+function App() {
+  const [authed, setAuthed] = useState(() => !!getStoredSession());
+  const [step, setStep] = useState(1);
+  const [categoriesJson, setCategoriesJson] = useState("");
+  const [segments, setSegments] = useState([]);
+  const [segmentArticles, setSegmentArticles] = useState({});
+  const [activeSegment, setActiveSegment] = useState("");
+  const [articlesJson, setArticlesJson] = useState("");
+  const [loadMsg, setLoadMsg] = useState("");
+  const [results, setResults] = useState({});
+  const [analyzing, setAnalyzing] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [articlesPerPage, setArticlesPerPage] = useState(50);
+  const [segmentOffsets, setSegmentOffsets] = useState({});
+  const [analysisMode, setAnalysisMode] = useState("fe");
+  const [segmentStatus, setSegmentStatus] = useState({});
+  const [segmentSearch, setSegmentSearch] = useState("");
+  const [savedAnalyses, setSavedAnalyses] = useState(getSavedAnalyses());
+  const [savedMsg, setSavedMsg] = useState("");
+
+  function loadSegments() {
+    try {
+      const parsed = JSON.parse(categoriesJson);
+      const slugs = Array.isArray(parsed) ? parsed.map((c) => c.slug).filter(Boolean) : [];
+      if (slugs.length === 0) throw new Error("empty");
+      setSegments(slugs); setActiveSegment(slugs[0]); setStep(2); setLoadMsg("");
+    } catch (e) { setLoadMsg("Could not read that as a segment list. Paste the full array."); }
+  }
+
+  function selectSegment(seg) { setActiveSegment(seg); setArticlesJson(""); setLoadMsg(""); }
+
+  function loadArticlesForSegment() {
+    let parsed;
+    try { parsed = JSON.parse(articlesJson); }
+    catch (e) { setLoadMsg("Could not read that as JSON."); return; }
+
+    const wpError = detectWpRestError(parsed);
+    const currentOffset = segmentOffsets[activeSegment] || 0;
+
+    if (wpError) {
+      if (currentOffset === 0) {
+        setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: `${wpError.status} ${wpError.code.replace(/_/g, " ")} - fails at the first page, likely not served by FE's article API.` } }));
+        setLoadMsg(`✗ "${activeSegment}" is not fetchable through this API.`);
+      } else {
+        setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "end-of-range", reason: `Reached the end of available articles (no more after #${currentOffset}).` } }));
+        setLoadMsg(`✓ That's all the articles available in "${activeSegment}".`);
+      }
+      return;
+    }
+
+    const arts = normalizeArticles(parsed, activeSegment);
+    if (arts.length === 0) {
+      setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: "JSON shape wasn't recognized as article data." } }));
+      setLoadMsg(`✗ No articles found for "${activeSegment}".`);
+      return;
+    }
+
+    setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "ok", reason: "" } }));
+    setSegmentArticles((prev) => {
+      const existing = prev[activeSegment] || [];
+      const existingIds = new Set(existing.map((a) => a.id));
+      return { ...prev, [activeSegment]: [...existing, ...arts.filter((a) => !existingIds.has(a.id))] };
+    });
+    setSegmentOffsets((prev) => ({ ...prev, [activeSegment]: currentOffset + Number(articlesPerPage) }));
+    setArticlesJson("");
+    setLoadMsg(`✓ Added ${arts.length} articles to "${activeSegment}"`);
+  }
+
+  const totalArticles = Object.values(segmentArticles).flat().length;
+  const segmentsWithArticles = Object.keys(segmentArticles).filter((sg) => segmentArticles[sg]?.length > 0);
+  const unsupportedSegments = Object.entries(segmentStatus).filter(([, v]) => v.type === "unsupported");
+  const filteredSegments = segments.filter((sg) => sg.toLowerCase().includes(segmentSearch.toLowerCase()));
+
+  async function analyzeAll() {
+    setAnalyzing(true); setStep(4);
+    const allArticles = Object.values(segmentArticles).flat();
+    const newResults = {};
+    for (let i = 0; i < allArticles.length; i++) {
+      setProgress(`Analyzing ${i + 1} of ${allArticles.length}...`);
+      try { newResults[allArticles[i].id] = await callAnalyzeApi(allArticles[i], analysisMode); }
+      catch (e) { newResults[allArticles[i].id] = { overall_health: "Weak", findings: [{ severity: "red", issue_name: "Analysis failed", what_is_wrong: String(e.message || e), why_it_hurts: "", fix: "Retry" }], _failed: true }; }
+      setResults({ ...newResults });
+    }
+    setProgress(""); setAnalyzing(false);
+  }
+
+  async function retryFailed() {
+    setAnalyzing(true);
+    const allArticles = Object.values(segmentArticles).flat();
+    const failedIds = Object.entries(results).filter(([, r]) => r._failed).map(([id]) => id);
+    const toRetry = allArticles.filter((a) => failedIds.includes(a.id));
+    const newResults = { ...results };
+    for (let i = 0; i < toRetry.length; i++) {
+      setProgress(`Retrying ${i + 1} of ${toRetry.length}...`);
+      try { newResults[toRetry[i].id] = await callAnalyzeApi(toRetry[i], analysisMode); }
+      catch (e) { newResults[toRetry[i].id] = { overall_health: "Weak", findings: [{ severity: "red", issue_name: "Failed again", what_is_wrong: String(e.message || e), why_it_hurts: "", fix: "Retry" }], _failed: true }; }
+      setResults({ ...newResults });
+    }
+    setProgress(""); setAnalyzing(false);
+  }
+
+  function buildCsvRows() {
+    const allArticles = Object.values(segmentArticles).flat();
+    return Object.entries(results).map(([id, r]) => {
+      const a = allArticles.find((x) => x.id === id);
+      const top = r.findings?.[0];
+      return {
+        segment: a?.segment, headline: a?.headline, url: a?.url, byline: a?.byline, publish_date: a?.publish_date,
+        verdict: r.verdict || r.overall_health,
+        top_finding: top ? `${top.severity === "red" ? "RED" : "YELLOW"} ${top.issue_name}: ${top.what_is_wrong}` : "None",
+        why_it_hurts: top?.why_it_hurts, fix: top?.fix,
+        ymyl_score: r.ymyl_score ?? "", experience: r.experience ?? r.experience_score ?? "", expertise: r.expertise ?? "",
+        authoritativeness: r.authoritativeness ?? "", trustworthiness: r.trustworthiness ?? r.trust_score ?? "",
+        information_gain_score: r.information_gain_score ?? "", spam_risk: r.spam_risk ?? "",
+      };
+    });
+  }
+
+  function exportCsv() { downloadCsv(buildCsvRows(), `fe-audit-${new Date().toISOString().slice(0, 10)}.csv`); }
+  function exportSavedCsv(entry) { downloadCsv(entry.rows, `fe-audit-${entry.timestamp.slice(0, 10)}.csv`); }
+
+  function saveToMemory() {
+    const rows = buildCsvRows();
+    if (rows.length === 0) { setSavedMsg("Nothing to save yet."); return; }
+    const entry = { timestamp: new Date().toISOString(), mode: analysisMode, segments: [...new Set(rows.map((r) => r.segment))], articleCount: rows.length, rows };
+    addSavedAnalysis(entry);
+    setSavedAnalyses(getSavedAnalyses());
+    setSavedMsg(`✓ Saved (${rows.length} articles) to this browser's memory.`);
+  }
+
+  function deleteSaved(timestamp) { deleteSavedAnalysis(timestamp); setSavedAnalyses(getSavedAnalyses()); }
+
+  const resultEntries = Object.entries(results);
+  const segmentSummary = segmentsWithArticles.map((seg) => {
+    const arts = segmentArticles[seg] || [];
+    const segResults = arts.map((a) => results[a.id]).filter(Boolean);
+    const red = segResults.reduce((sum, r) => sum + (r.findings?.filter((f) => f.severity === "red").length || 0), 0);
+    const yellow = segResults.reduce((sum, r) => sum + (r.findings?.filter((f) => f.severity === "yellow").length || 0), 0);
+    return { seg, total: arts.length, analyzed: segResults.length, red, yellow };
+  });
+
+  if (!authed) return <LoginScreen onSuccess={() => setAuthed(true)} />;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <div><h1 style={st.h1}>FE Content Audit</h1><p style={st.subtitle}>Load segments, load articles, review, then analyze for red flags.</p></div>
+        <button style={st.btnOutline} onClick={() => { clearSession(); setAuthed(false); }}>Log out</button>
+      </div>
+
+      <div style={st.cardLavender}>
+        <p style={{ ...st.stepTitle, fontSize: "18px" }}>Saved analyses (this browser)</p>
+        <p style={st.stepDesc}>Reload or export past runs without re-analyzing.</p>
+        {savedMsg && <p style={{ fontSize: "13px", color: C.success, marginBottom: "8px" }}>{savedMsg}</p>}
+        {savedAnalyses.length === 0 ? <p style={st.caption}>No saved analyses yet.</p> : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            {savedAnalyses.map((entry) => (
+              <div key={entry.timestamp} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.canvas, borderRadius: "8px", padding: "10px 14px", fontSize: "13px" }}>
+                <span><strong>{new Date(entry.timestamp).toLocaleString()}</strong> — {entry.articleCount} articles, {entry.segments.join(", ")}</span>
+                <span style={{ display: "flex", gap: "6px" }}>
+                  <button style={{ ...st.btnOutline, padding: "5px 14px", fontSize: "12px" }} onClick={() => exportSavedCsv(entry)}>Export CSV</button>
+                  <button style={{ ...st.btnOutlineError, padding: "5px 14px", fontSize: "12px" }} onClick={() => deleteSaved(entry.timestamp)}>Delete</button>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={st.card}>
+        <p style={st.stepTitle}>Step 1 — Load your segments</p>
+        <p style={st.stepDesc}>Click, copy (Ctrl+A, Ctrl+C), paste below.</p>
+        <a href="https://www.financialexpress.com/wp-json/wp/v2/categories?per_page=100" target="_blank" rel="noopener noreferrer" style={st.link}>https://www.financialexpress.com/wp-json/wp/v2/categories?per_page=100</a>
+        <textarea style={{ minHeight: "80px", marginTop: "10px" }} value={categoriesJson} onChange={(e) => setCategoriesJson(e.target.value)} placeholder="Paste everything you copied here" />
+        <div style={{ marginTop: "12px" }}><button style={st.btnPrimary} onClick={loadSegments}>Load segments</button></div>
+        {segments.length > 0 && <p style={{ fontSize: "13px", color: C.success, marginTop: "10px", fontWeight: 700 }}>✓ {segments.length} segments loaded</p>}
+        {loadMsg && step === 1 && <p style={{ fontSize: "13px", color: C.error, marginTop: "8px" }}>{loadMsg}</p>}
+      </div>
+
+      {step >= 2 && (
+        <div style={st.card}>
+          <p style={st.stepTitle}>Step 2 — Load articles for each segment</p>
+          <p style={st.stepDesc}>Search and click a segment, then use its link to fetch articles.</p>
+          <input style={{ width: "100%", marginBottom: "10px" }} placeholder="Search segments" value={segmentSearch} onChange={(e) => setSegmentSearch(e.target.value)} />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "14px", maxHeight: "140px", overflowY: "auto" }}>
+            {filteredSegments.map((sg) => {
+              const status = segmentStatus[sg];
+              const pillStyle = sg === activeSegment ? st.pillTagActive : status?.type === "unsupported" ? st.pillTagBad : st.pillTag;
+              return <button key={sg} style={pillStyle} onClick={() => selectSegment(sg)}>{status?.type === "unsupported" && "✕ "}{status?.type === "ok" && "✓ "}{sg}{segmentArticles[sg]?.length ? ` (${segmentArticles[sg].length})` : ""}</button>;
+            })}
+          </div>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "10px" }}>
+            <span style={{ fontWeight: 700, fontSize: "14px" }}>Selected: {activeSegment || "none"}</span>
+            <label style={st.caption}>Per click:</label>
+            <input type="number" style={{ width: "60px" }} value={articlesPerPage} onChange={(e) => setArticlesPerPage(e.target.value)} />
+          </div>
+          {segmentStatus[activeSegment]?.type === "unsupported" && <div style={{ background: C.errorTint, color: C.error, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>✕ {segmentStatus[activeSegment].reason}</div>}
+          {segmentStatus[activeSegment]?.type === "end-of-range" && <div style={{ background: C.successTint, color: C.success, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>✓ {segmentStatus[activeSegment].reason}</div>}
+          {activeSegment && (
+            <React.Fragment>
+              <p style={st.caption}>Fetches the next {articlesPerPage} — starting from #{(segmentOffsets[activeSegment] || 0) + 1}:</p>
+              <a href={`https://www.financialexpress.com/wp-json/wp/v2/category/${activeSegment}/${segmentOffsets[activeSegment] || 0}/${articlesPerPage}`} target="_blank" rel="noopener noreferrer" style={{ ...st.link, marginBottom: "10px" }}>
+                https://www.financialexpress.com/wp-json/wp/v2/category/{activeSegment}/{segmentOffsets[activeSegment] || 0}/{articlesPerPage}
+              </a>
+              <textarea style={{ minHeight: "80px" }} value={articlesJson} onChange={(e) => setArticlesJson(e.target.value)} placeholder="Paste what you copied here" />
+              <div style={{ marginTop: "10px" }}><button style={st.btnPrimary} onClick={loadArticlesForSegment}>Add these articles to "{activeSegment}"</button></div>
+            </React.Fragment>
+          )}
+          {loadMsg && <p style={{ fontSize: "13px", color: loadMsg.startsWith("✓") ? C.success : C.error, marginTop: "10px", fontWeight: 600 }}>{loadMsg}</p>}
+          {unsupportedSegments.length > 0 && (
+            <div style={{ marginTop: "14px", borderTop: `1px solid ${C.hairline}`, paddingTop: "12px" }}>
+              <p style={{ fontSize: "13px", fontWeight: 700, color: C.error, margin: "0 0 6px" }}>Segments not fetchable via this API:</p>
+              {unsupportedSegments.map(([sg, v]) => <p key={sg} style={{ fontSize: "12px", color: C.error, margin: "0 0 4px" }}>✕ <strong>{sg}</strong>: {v.reason}</p>)}
+            </div>
+          )}
+          {segmentsWithArticles.length > 0 && <div style={{ marginTop: "14px" }}><button style={st.btnPrimary} onClick={() => setStep(3)}>Continue to review ({totalArticles} total)</button></div>}
+        </div>
+      )}
+
+      {step >= 3 && totalArticles > 0 && (
+        <div style={st.card}>
+          <p style={st.stepTitle}>Step 3 — Review before analyzing</p>
+          <p style={st.stepDesc}>{totalArticles} articles across {segmentsWithArticles.length} segment(s). Each is one Claude API call.</p>
+          <div style={{ maxHeight: "260px", overflowY: "auto", border: `1px solid ${C.hairline}`, borderRadius: "8px" }}>
+            {segmentsWithArticles.map((seg) => (
+              <div key={seg}>
+                <div style={{ background: C.cream, padding: "8px 14px", fontSize: "13px", fontWeight: 700 }}>{seg} ({segmentArticles[seg].length})</div>
+                {segmentArticles[seg].map((a) => <div key={a.id} style={{ padding: "8px 14px", fontSize: "13px", borderBottom: `1px solid ${C.hairline}` }}>{a.headline} <span style={st.caption}>— {a.byline || "no byline"} · {formatDate(a.publish_date)}</span></div>)}
+              </div>
+            ))}
+          </div>
+          <div style={{ margin: "14px 0", padding: "12px 14px", background: C.lavender, borderRadius: "8px" }}>
+            <p style={{ fontSize: "13px", fontWeight: 700, margin: "0 0 8px" }}>Analysis mode:</p>
+            <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={analysisMode === "fe"} onChange={() => setAnalysisMode("fe")} /> FE YMYL/E-E-A-T Guidelines</label>
+            <label style={{ fontSize: "13px" }}><input type="radio" checked={analysisMode === "hcs"} onChange={() => setAnalysisMode("hcs")} /> Google HCS / Spam Audit</label>
+          </div>
+          <button style={st.btnPrimary} onClick={analyzeAll} disabled={analyzing}>{analyzing ? "Analyzing..." : `Analyze all ${totalArticles} articles`}</button>
+        </div>
+      )}
+
+      {step >= 4 && (
+        <div style={st.card}>
+          <p style={st.stepTitle}>Step 4 — Red flags by segment</p>
+          {analyzing && <p style={{ fontSize: "14px", color: C.inkMute }}>{progress}</p>}
+          {segmentSummary.length > 0 && (
+            <div style={{ marginBottom: "16px" }}>
+              {segmentSummary.map((sm) => (
+                <div key={sm.seg} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: C.cream, borderRadius: "8px", marginBottom: "6px", fontSize: "13px" }}>
+                  <span style={{ fontWeight: 700 }}>{sm.seg}</span>
+                  <span style={st.caption}>{sm.analyzed}/{sm.total} analyzed</span>
+                  <span>{sm.red > 0 && <span style={{ color: C.error, fontWeight: 700, marginRight: "10px" }}>● {sm.red} red</span>}{sm.yellow > 0 && <span style={{ color: C.warn, fontWeight: 700 }}>● {sm.yellow} yellow</span>}{sm.analyzed > 0 && sm.red === 0 && sm.yellow === 0 && <span style={{ color: C.success }}>✓ clean</span>}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {resultEntries.length > 0 && (
+            <React.Fragment>
+              <div style={{ marginBottom: "14px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button style={st.btnOutline} onClick={exportCsv}>Export CSV</button>
+                <button style={st.btnPrimary} onClick={saveToMemory}>Save to memory</button>
+                {Object.values(results).some((r) => r._failed) && <button style={st.btnOutlineError} onClick={retryFailed} disabled={analyzing}>Retry {Object.values(results).filter((r) => r._failed).length} failed</button>}
+              </div>
+              {resultEntries.map(([id, r]) => {
+                const a = Object.values(segmentArticles).flat().find((x) => x.id === id);
+                const badgeLabel = r.verdict || r.overall_health;
+                const isBad = badgeLabel === "Dead Weight" || badgeLabel === "Weak";
+                const isMid = badgeLabel === "Borderline" || badgeLabel === "Needs Work";
+                return (
+                  <div key={id} style={{ border: `1px solid ${C.hairline}`, borderRadius: "12px", padding: "14px 16px", marginBottom: "10px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <p style={{ fontWeight: 700, fontSize: "14px", margin: 0 }}>{a?.headline}</p>
+                      <span style={{ fontSize: "12px", padding: "3px 12px", borderRadius: "90px", background: isBad ? C.errorTint : isMid ? C.warnTint : C.successTint, color: isBad ? C.error : isMid ? C.warn : C.success, fontWeight: 700, whiteSpace: "nowrap" }}>{badgeLabel}</span>
+                    </div>
+                    <p style={{ ...st.caption, margin: "4px 0 10px" }}>{a?.segment} · {a?.byline} · {formatDate(a?.publish_date)}</p>
+                    {r.spam_risk && r.spam_risk !== "none" && <p style={{ fontSize: "12px", color: C.error, fontWeight: 700, margin: "0 0 8px" }}>⚠ Spam risk: {r.spam_risk}</p>}
+                    {r.findings?.map((f, i) => (
+                      <div key={i} style={{ fontSize: "13px", marginBottom: "8px", paddingLeft: "10px", borderLeft: `3px solid ${f.severity === "red" ? C.error : C.warn}` }}>
+                        <strong>● {f.issue_name}</strong><br />{f.what_is_wrong}<br /><span style={{ color: C.inkMute }}>{f.why_it_hurts}</span><br /><span style={{ color: C.inkMute }}>Fix: {f.fix}</span>
+                      </div>
+                    ))}
+                    {r.bottom_line && <p style={{ fontSize: "13px", fontStyle: "italic", marginTop: "8px" }}>{r.bottom_line}</p>}
+                    <div style={{ display: "flex", gap: "12px", marginTop: "10px", fontSize: "12px", color: C.inkMute }}>
+                      {r.ymyl_score !== undefined && <span>YMYL {r.ymyl_score}</span>}
+                      {r.experience !== undefined && <span>Exp {r.experience}</span>}
+                      {r.expertise !== undefined && <span>Expert {r.expertise}</span>}
+                      {r.authoritativeness !== undefined && <span>Auth {r.authoritativeness}</span>}
+                      {r.trustworthiness !== undefined && <span>Trust {r.trustworthiness}</span>}
+                      {r.information_gain_score !== undefined && <span>Info Gain {r.information_gain_score}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </React.Fragment>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
