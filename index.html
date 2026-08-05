@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
@@ -23,7 +23,7 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react">
+<script type="text/babel" data-presets="react" data-runtime="classic">
 const { useState } = React;
 
 const C = {
@@ -215,10 +215,10 @@ function App() {
     if (wpError) {
       if (currentOffset === 0) {
         setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: `${wpError.status} ${wpError.code.replace(/_/g, " ")} - fails at the first page, likely not served by FE's article API.` } }));
-        setLoadMsg(`✗ "${activeSegment}" is not fetchable through this API.`);
+        setLoadMsg(`âœ— "${activeSegment}" is not fetchable through this API.`);
       } else {
         setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "end-of-range", reason: `Reached the end of available articles (no more after #${currentOffset}).` } }));
-        setLoadMsg(`✓ That's all the articles available in "${activeSegment}".`);
+        setLoadMsg(`âœ“ That's all the articles available in "${activeSegment}".`);
       }
       return;
     }
@@ -226,7 +226,7 @@ function App() {
     const arts = normalizeArticles(parsed, activeSegment);
     if (arts.length === 0) {
       setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: "JSON shape wasn't recognized as article data." } }));
-      setLoadMsg(`✗ No articles found for "${activeSegment}".`);
+      setLoadMsg(`âœ— No articles found for "${activeSegment}".`);
       return;
     }
 
@@ -238,7 +238,7 @@ function App() {
     });
     setSegmentOffsets((prev) => ({ ...prev, [activeSegment]: currentOffset + Number(articlesPerPage) }));
     setArticlesJson("");
-    setLoadMsg(`✓ Added ${arts.length} articles to "${activeSegment}"`);
+    setLoadMsg(`âœ“ Added ${arts.length} articles to "${activeSegment}"`);
   }
 
   const totalArticles = Object.values(segmentArticles).flat().length;
@@ -300,7 +300,7 @@ function App() {
     const entry = { timestamp: new Date().toISOString(), mode: analysisMode, segments: [...new Set(rows.map((r) => r.segment))], articleCount: rows.length, rows };
     addSavedAnalysis(entry);
     setSavedAnalyses(getSavedAnalyses());
-    setSavedMsg(`✓ Saved (${rows.length} articles) to this browser's memory.`);
+    setSavedMsg(`âœ“ Saved (${rows.length} articles) to this browser's memory.`);
   }
 
   function deleteSaved(timestamp) { deleteSavedAnalysis(timestamp); setSavedAnalyses(getSavedAnalyses()); }
@@ -331,7 +331,7 @@ function App() {
           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
             {savedAnalyses.map((entry) => (
               <div key={entry.timestamp} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.canvas, borderRadius: "8px", padding: "10px 14px", fontSize: "13px" }}>
-                <span><strong>{new Date(entry.timestamp).toLocaleString()}</strong> — {entry.articleCount} articles, {entry.segments.join(", ")}</span>
+                <span><strong>{new Date(entry.timestamp).toLocaleString()}</strong> â€” {entry.articleCount} articles, {entry.segments.join(", ")}</span>
                 <span style={{ display: "flex", gap: "6px" }}>
                   <button style={{ ...st.btnOutline, padding: "5px 14px", fontSize: "12px" }} onClick={() => exportSavedCsv(entry)}>Export CSV</button>
                   <button style={{ ...st.btnOutlineError, padding: "5px 14px", fontSize: "12px" }} onClick={() => deleteSaved(entry.timestamp)}>Delete</button>
@@ -343,25 +343,25 @@ function App() {
       </div>
 
       <div style={st.card}>
-        <p style={st.stepTitle}>Step 1 — Load your segments</p>
+        <p style={st.stepTitle}>Step 1 â€” Load your segments</p>
         <p style={st.stepDesc}>Click, copy (Ctrl+A, Ctrl+C), paste below.</p>
         <a href="https://www.financialexpress.com/wp-json/wp/v2/categories?per_page=100" target="_blank" rel="noopener noreferrer" style={st.link}>https://www.financialexpress.com/wp-json/wp/v2/categories?per_page=100</a>
         <textarea style={{ minHeight: "80px", marginTop: "10px" }} value={categoriesJson} onChange={(e) => setCategoriesJson(e.target.value)} placeholder="Paste everything you copied here" />
         <div style={{ marginTop: "12px" }}><button style={st.btnPrimary} onClick={loadSegments}>Load segments</button></div>
-        {segments.length > 0 && <p style={{ fontSize: "13px", color: C.success, marginTop: "10px", fontWeight: 700 }}>✓ {segments.length} segments loaded</p>}
+        {segments.length > 0 && <p style={{ fontSize: "13px", color: C.success, marginTop: "10px", fontWeight: 700 }}>âœ“ {segments.length} segments loaded</p>}
         {loadMsg && step === 1 && <p style={{ fontSize: "13px", color: C.error, marginTop: "8px" }}>{loadMsg}</p>}
       </div>
 
       {step >= 2 && (
         <div style={st.card}>
-          <p style={st.stepTitle}>Step 2 — Load articles for each segment</p>
+          <p style={st.stepTitle}>Step 2 â€” Load articles for each segment</p>
           <p style={st.stepDesc}>Search and click a segment, then use its link to fetch articles.</p>
           <input style={{ width: "100%", marginBottom: "10px" }} placeholder="Search segments" value={segmentSearch} onChange={(e) => setSegmentSearch(e.target.value)} />
           <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "14px", maxHeight: "140px", overflowY: "auto" }}>
             {filteredSegments.map((sg) => {
               const status = segmentStatus[sg];
               const pillStyle = sg === activeSegment ? st.pillTagActive : status?.type === "unsupported" ? st.pillTagBad : st.pillTag;
-              return <button key={sg} style={pillStyle} onClick={() => selectSegment(sg)}>{status?.type === "unsupported" && "✕ "}{status?.type === "ok" && "✓ "}{sg}{segmentArticles[sg]?.length ? ` (${segmentArticles[sg].length})` : ""}</button>;
+              return <button key={sg} style={pillStyle} onClick={() => selectSegment(sg)}>{status?.type === "unsupported" && "âœ• "}{status?.type === "ok" && "âœ“ "}{sg}{segmentArticles[sg]?.length ? ` (${segmentArticles[sg].length})` : ""}</button>;
             })}
           </div>
           <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "10px" }}>
@@ -369,11 +369,11 @@ function App() {
             <label style={st.caption}>Per click:</label>
             <input type="number" style={{ width: "60px" }} value={articlesPerPage} onChange={(e) => setArticlesPerPage(e.target.value)} />
           </div>
-          {segmentStatus[activeSegment]?.type === "unsupported" && <div style={{ background: C.errorTint, color: C.error, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>✕ {segmentStatus[activeSegment].reason}</div>}
-          {segmentStatus[activeSegment]?.type === "end-of-range" && <div style={{ background: C.successTint, color: C.success, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>✓ {segmentStatus[activeSegment].reason}</div>}
+          {segmentStatus[activeSegment]?.type === "unsupported" && <div style={{ background: C.errorTint, color: C.error, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>âœ• {segmentStatus[activeSegment].reason}</div>}
+          {segmentStatus[activeSegment]?.type === "end-of-range" && <div style={{ background: C.successTint, color: C.success, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>âœ“ {segmentStatus[activeSegment].reason}</div>}
           {activeSegment && (
             <React.Fragment>
-              <p style={st.caption}>Fetches the next {articlesPerPage} — starting from #{(segmentOffsets[activeSegment] || 0) + 1}:</p>
+              <p style={st.caption}>Fetches the next {articlesPerPage} â€” starting from #{(segmentOffsets[activeSegment] || 0) + 1}:</p>
               <a href={`https://www.financialexpress.com/wp-json/wp/v2/category/${activeSegment}/${segmentOffsets[activeSegment] || 0}/${articlesPerPage}`} target="_blank" rel="noopener noreferrer" style={{ ...st.link, marginBottom: "10px" }}>
                 https://www.financialexpress.com/wp-json/wp/v2/category/{activeSegment}/{segmentOffsets[activeSegment] || 0}/{articlesPerPage}
               </a>
@@ -381,11 +381,11 @@ function App() {
               <div style={{ marginTop: "10px" }}><button style={st.btnPrimary} onClick={loadArticlesForSegment}>Add these articles to "{activeSegment}"</button></div>
             </React.Fragment>
           )}
-          {loadMsg && <p style={{ fontSize: "13px", color: loadMsg.startsWith("✓") ? C.success : C.error, marginTop: "10px", fontWeight: 600 }}>{loadMsg}</p>}
+          {loadMsg && <p style={{ fontSize: "13px", color: loadMsg.startsWith("âœ“") ? C.success : C.error, marginTop: "10px", fontWeight: 600 }}>{loadMsg}</p>}
           {unsupportedSegments.length > 0 && (
             <div style={{ marginTop: "14px", borderTop: `1px solid ${C.hairline}`, paddingTop: "12px" }}>
               <p style={{ fontSize: "13px", fontWeight: 700, color: C.error, margin: "0 0 6px" }}>Segments not fetchable via this API:</p>
-              {unsupportedSegments.map(([sg, v]) => <p key={sg} style={{ fontSize: "12px", color: C.error, margin: "0 0 4px" }}>✕ <strong>{sg}</strong>: {v.reason}</p>)}
+              {unsupportedSegments.map(([sg, v]) => <p key={sg} style={{ fontSize: "12px", color: C.error, margin: "0 0 4px" }}>âœ• <strong>{sg}</strong>: {v.reason}</p>)}
             </div>
           )}
           {segmentsWithArticles.length > 0 && <div style={{ marginTop: "14px" }}><button style={st.btnPrimary} onClick={() => setStep(3)}>Continue to review ({totalArticles} total)</button></div>}
@@ -394,13 +394,13 @@ function App() {
 
       {step >= 3 && totalArticles > 0 && (
         <div style={st.card}>
-          <p style={st.stepTitle}>Step 3 — Review before analyzing</p>
+          <p style={st.stepTitle}>Step 3 â€” Review before analyzing</p>
           <p style={st.stepDesc}>{totalArticles} articles across {segmentsWithArticles.length} segment(s). Each is one Claude API call.</p>
           <div style={{ maxHeight: "260px", overflowY: "auto", border: `1px solid ${C.hairline}`, borderRadius: "8px" }}>
             {segmentsWithArticles.map((seg) => (
               <div key={seg}>
                 <div style={{ background: C.cream, padding: "8px 14px", fontSize: "13px", fontWeight: 700 }}>{seg} ({segmentArticles[seg].length})</div>
-                {segmentArticles[seg].map((a) => <div key={a.id} style={{ padding: "8px 14px", fontSize: "13px", borderBottom: `1px solid ${C.hairline}` }}>{a.headline} <span style={st.caption}>— {a.byline || "no byline"} · {formatDate(a.publish_date)}</span></div>)}
+                {segmentArticles[seg].map((a) => <div key={a.id} style={{ padding: "8px 14px", fontSize: "13px", borderBottom: `1px solid ${C.hairline}` }}>{a.headline} <span style={st.caption}>â€” {a.byline || "no byline"} Â· {formatDate(a.publish_date)}</span></div>)}
               </div>
             ))}
           </div>
@@ -415,7 +415,7 @@ function App() {
 
       {step >= 4 && (
         <div style={st.card}>
-          <p style={st.stepTitle}>Step 4 — Red flags by segment</p>
+          <p style={st.stepTitle}>Step 4 â€” Red flags by segment</p>
           {analyzing && <p style={{ fontSize: "14px", color: C.inkMute }}>{progress}</p>}
           {segmentSummary.length > 0 && (
             <div style={{ marginBottom: "16px" }}>
@@ -423,7 +423,7 @@ function App() {
                 <div key={sm.seg} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: C.cream, borderRadius: "8px", marginBottom: "6px", fontSize: "13px" }}>
                   <span style={{ fontWeight: 700 }}>{sm.seg}</span>
                   <span style={st.caption}>{sm.analyzed}/{sm.total} analyzed</span>
-                  <span>{sm.red > 0 && <span style={{ color: C.error, fontWeight: 700, marginRight: "10px" }}>● {sm.red} red</span>}{sm.yellow > 0 && <span style={{ color: C.warn, fontWeight: 700 }}>● {sm.yellow} yellow</span>}{sm.analyzed > 0 && sm.red === 0 && sm.yellow === 0 && <span style={{ color: C.success }}>✓ clean</span>}</span>
+                  <span>{sm.red > 0 && <span style={{ color: C.error, fontWeight: 700, marginRight: "10px" }}>â— {sm.red} red</span>}{sm.yellow > 0 && <span style={{ color: C.warn, fontWeight: 700 }}>â— {sm.yellow} yellow</span>}{sm.analyzed > 0 && sm.red === 0 && sm.yellow === 0 && <span style={{ color: C.success }}>âœ“ clean</span>}</span>
                 </div>
               ))}
             </div>
@@ -446,11 +446,11 @@ function App() {
                       <p style={{ fontWeight: 700, fontSize: "14px", margin: 0 }}>{a?.headline}</p>
                       <span style={{ fontSize: "12px", padding: "3px 12px", borderRadius: "90px", background: isBad ? C.errorTint : isMid ? C.warnTint : C.successTint, color: isBad ? C.error : isMid ? C.warn : C.success, fontWeight: 700, whiteSpace: "nowrap" }}>{badgeLabel}</span>
                     </div>
-                    <p style={{ ...st.caption, margin: "4px 0 10px" }}>{a?.segment} · {a?.byline} · {formatDate(a?.publish_date)}</p>
-                    {r.spam_risk && r.spam_risk !== "none" && <p style={{ fontSize: "12px", color: C.error, fontWeight: 700, margin: "0 0 8px" }}>⚠ Spam risk: {r.spam_risk}</p>}
+                    <p style={{ ...st.caption, margin: "4px 0 10px" }}>{a?.segment} Â· {a?.byline} Â· {formatDate(a?.publish_date)}</p>
+                    {r.spam_risk && r.spam_risk !== "none" && <p style={{ fontSize: "12px", color: C.error, fontWeight: 700, margin: "0 0 8px" }}>âš  Spam risk: {r.spam_risk}</p>}
                     {r.findings?.map((f, i) => (
                       <div key={i} style={{ fontSize: "13px", marginBottom: "8px", paddingLeft: "10px", borderLeft: `3px solid ${f.severity === "red" ? C.error : C.warn}` }}>
-                        <strong>● {f.issue_name}</strong><br />{f.what_is_wrong}<br /><span style={{ color: C.inkMute }}>{f.why_it_hurts}</span><br /><span style={{ color: C.inkMute }}>Fix: {f.fix}</span>
+                        <strong>â— {f.issue_name}</strong><br />{f.what_is_wrong}<br /><span style={{ color: C.inkMute }}>{f.why_it_hurts}</span><br /><span style={{ color: C.inkMute }}>Fix: {f.fix}</span>
                       </div>
                     ))}
                     {r.bottom_line && <p style={{ fontSize: "13px", fontStyle: "italic", marginTop: "8px" }}>{r.bottom_line}</p>}
@@ -477,3 +477,4 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 </body>
 </html>
+
