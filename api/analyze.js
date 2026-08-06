@@ -13,11 +13,13 @@ GUIDELINES: G1 reader wellbeing, G2 verifiable expertise, G3 attribution/fact-ch
 
 Score E-E-A-T (Experience, Expertise, Authoritativeness, Trustworthiness) independently 1-5.
 
-CRITICAL LENGTH LIMIT: Respond with ONLY the JSON below, under 600 words total. AT MOST 2 findings. ONE sentence per field. No markdown fences, no text outside the JSON object.
+GROUNDING RULES: Never invent a fact, quote, source, performance result, or ranking outcome. Every finding must include a short verbatim evidence excerpt copied from the supplied headline, subheading, byline, or body text. If the article does not contain evidence for a concern, do not report that concern. Recommendations must be plain, specific editorial actions that follow directly from the evidence. Do not promise traffic or ranking gains.
+
+CRITICAL LENGTH LIMIT: Respond with ONLY the JSON below, under 800 words total. AT MOST 2 findings. Keep every field concise. No markdown fences, no text outside the JSON object.
 
 {
   "overall_health": "Strong|Needs Work|Weak",
-  "findings": [{"severity":"red|yellow","issue_name":"short name","what_is_wrong":"ONE sentence, specific to this article","why_it_hurts":"ONE short sentence","fix":"ONE short concrete action"}],
+  "findings": [{"severity":"red|yellow","issue_name":"short name","evidence":"short verbatim excerpt from this article","what_is_wrong":"ONE sentence, specific to this article","why_it_hurts":"ONE short sentence","fix":"ONE short concrete action","optimization_steps":["clear action 1","clear action 2"],"expected_improvement":"ONE cautious sentence describing the content-quality benefit, without promising rankings"}],
   "whats_working": ["one short strength, or omit if none"],
   "bottom_line": "ONE sentence verdict",
   "ymyl_score":1-5,"experience":1-5,"expertise":1-5,"authoritativeness":1-5,"trustworthiness":1-5,
@@ -30,7 +32,9 @@ CONTEXT: FE's traffic dropped after the Aug 2025 core update, partially recovere
 
 EVALUATE ON: 1) HCS & Information Gain - original reporting/analysis vs summarizing others; search-engine-first content; fluff/padding. 2) E-E-A-T - first-hand experience vs generic guide; YMYL claims backed by primary-source citations, objective tone; curiosity-gap headlines. 3) SPAM POLICIES - scaled/AI-generated feel adding little value; thin content lacking depth/data.
 
-CRITICAL LENGTH LIMIT: Respond with ONLY the JSON below, under 600 words total. AT MOST 2 findings. ONE sentence per field. No markdown fences, no text outside the JSON.
+GROUNDING RULES: Never invent a fact, quote, source, performance result, or ranking outcome. Every finding must include a short verbatim evidence excerpt copied from the supplied headline, subheading, byline, or body text. If the article does not contain evidence for a concern, do not report that concern. Recommendations must be plain, specific editorial actions that follow directly from the evidence. Do not promise traffic or ranking gains.
+
+CRITICAL LENGTH LIMIT: Respond with ONLY the JSON below, under 800 words total. AT MOST 2 findings. Keep every field concise. No markdown fences, no text outside the JSON.
 
 {
   "verdict": "Dead Weight|Borderline|Healthy",
@@ -38,7 +42,7 @@ CRITICAL LENGTH LIMIT: Respond with ONLY the JSON below, under 600 words total. 
   "experience_score": 1-5,
   "trust_score": 1-5,
   "spam_risk": "none|scaled-content-abuse|thin-content|syndicated-aggregation",
-  "findings": [{"severity":"red|yellow","issue_name":"short name","what_is_wrong":"ONE sentence, specific to this article","why_it_hurts":"ONE sentence tied to HCS/E-E-A-T/spam policy","fix":"ONE concrete action"}],
+  "findings": [{"severity":"red|yellow","issue_name":"short name","evidence":"short verbatim excerpt from this article","what_is_wrong":"ONE sentence, specific to this article","why_it_hurts":"ONE sentence tied to HCS/E-E-A-T/spam policy","fix":"ONE concrete action","optimization_steps":["clear action 1","clear action 2"],"expected_improvement":"ONE cautious sentence describing the content-quality benefit, without promising rankings"}],
   "bottom_line": "ONE sentence: is this Dead Weight and why"
 }`;
 
@@ -58,6 +62,25 @@ function buildUserPrompt(article) {
   const segment = String(article.segment || "(missing)").slice(0, 100);
   const bodyText = String(article.body_text || "").slice(0, 8000);
   return `Headline: ${headline}\nSubheading: ${subheading}\nByline: ${byline}\nPublish date: ${publishDate}\nSegment: ${segment}\nBody text: ${bodyText}`;
+}
+
+function normalizeEvidence(value) {
+  return String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+export function validateAnalysisResult(result, article) {
+  if (!result || typeof result !== "object" || !Array.isArray(result.findings) || result.findings.length > 2) return false;
+  const articleText = normalizeEvidence([article.headline, article.subheading, article.byline, article.body_text].join(" "));
+  return result.findings.every((finding) => {
+    if (!finding || !["red", "yellow"].includes(finding.severity)) return false;
+    const evidence = normalizeEvidence(finding.evidence);
+    const steps = finding.optimization_steps;
+    return evidence.length >= 8 && articleText.includes(evidence) &&
+      typeof finding.issue_name === "string" && typeof finding.what_is_wrong === "string" &&
+      typeof finding.why_it_hurts === "string" && typeof finding.fix === "string" &&
+      Array.isArray(steps) && steps.length >= 1 && steps.length <= 3 && steps.every((step) => typeof step === "string" && step.trim().length > 0) &&
+      typeof finding.expected_improvement === "string" && finding.expected_improvement.trim().length > 0;
+  });
 }
 
 function tryRepairTruncatedJson(text) {
@@ -143,9 +166,16 @@ export default async function handler(req, res) {
       const repaired = tryRepairTruncatedJson(cleaned);
       if (repaired) {
         repaired._wasTruncated = true;
+        if (!validateAnalysisResult(repaired, article)) {
+          return res.status(502).json({ error: "The analysis response was incomplete or not grounded in the article. Please retry." });
+        }
         return res.status(200).json(repaired);
       }
       return res.status(502).json({ error: "Could not parse model output as JSON", raw: cleaned.slice(0, 500) });
+    }
+
+    if (!validateAnalysisResult(parsed, article)) {
+      return res.status(502).json({ error: "The analysis response was incomplete or not grounded in the article. Please retry." });
     }
 
     return res.status(200).json(parsed);

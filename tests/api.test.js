@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import test from "node:test";
 import authHandler from "../api/auth.js";
 import { verifyToken } from "../api/_verifyToken.js";
+import { validateAnalysisResult } from "../api/analyze.js";
 
 function responseRecorder() {
   return {
@@ -49,4 +50,22 @@ test("token verification rejects missing, malformed, and expired credentials", (
   } finally {
     if (previous === undefined) delete process.env.SESSION_SECRET; else process.env.SESSION_SECRET = previous;
   }
+});
+
+test("analysis validation accepts grounded recommendations and rejects invented evidence", () => {
+  const article = { headline: "Rates remain unchanged", body_text: "The central bank kept the policy rate unchanged after its meeting." };
+  const result = {
+    findings: [{
+      severity: "yellow",
+      issue_name: "Missing context",
+      evidence: "kept the policy rate unchanged",
+      what_is_wrong: "The article does not explain the decision's effect.",
+      why_it_hurts: "Readers may not understand why the decision matters.",
+      fix: "Add one paragraph explaining the effect on borrowers.",
+      optimization_steps: ["Explain the effect on loan rates.", "Attribute the explanation to a named expert."],
+      expected_improvement: "This will make the article clearer and more useful.",
+    }],
+  };
+  assert.equal(validateAnalysisResult(result, article), true);
+  assert.equal(validateAnalysisResult({ ...result, findings: [{ ...result.findings[0], evidence: "invented quotation" }] }, article), false);
 });

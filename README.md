@@ -67,4 +67,6 @@ Set a monthly spending limit in the Anthropic Console as an independent safety c
 ## Notes
 
 - Saved analyses use browser `localStorage` — storage is per browser, not shared across devices or team members.
-- The frontend fetches FE article data directly from the browser. A segment that fails at offset 0 is marked unavailable through the FE API. A later failure is treated as the end of the available article range.
+- The article picker defaults to the last 12 months and also offers each elapsed month in the current and previous calendar year.
+- The frontend fetches FE article data directly from the browser using category IDs and exact date boundaries. A segment that fails on its first page is marked unavailable through the FE API. A later failure is treated as the end of the available article range.
+- Recommendations are displayed only when each finding contains evidence found in the submitted article and one to three concrete optimisation steps.

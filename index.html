@@ -16,8 +16,19 @@
   input[type=text], input[type=number], input[type=password], textarea {
     border: 1px solid #e6e6e6; border-radius: 4px; padding: 10px 12px; font-family: inherit; font-size: 14px; color: #1d1d1d;
   }
+  select { border: 1px solid #e6e6e6; border-radius: 4px; padding: 10px 12px; font-family: inherit; font-size: 14px; color: #1d1d1d; background: #ffffff; }
   textarea { width: 100%; font-family: monospace; font-size: 12px; }
   button { font-family: inherit; }
+  .page-header, .saved-row, .result-header { display: flex; justify-content: space-between; }
+  .saved-actions { display: flex; gap: 6px; }
+  @media (max-width: 640px) {
+    #root { padding: 20px 12px 48px; }
+    .login-wrap { margin: 56px auto; }
+    .page-header, .saved-row, .result-header { flex-direction: column; align-items: stretch !important; gap: 12px; }
+    .saved-actions { flex-wrap: wrap; }
+    .saved-actions button { flex: 1; }
+    input, select, textarea { max-width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -120,8 +131,45 @@ function formatDate(dateStr) {
   return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) + ", " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
+function stripHtml(value) {
+  const element = document.createElement("textarea");
+  element.innerHTML = String(value || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  return element.value;
+}
+
+function getMonthOptions() {
+  const now = new Date();
+  const first = new Date(now.getFullYear() - 1, 0, 1);
+  const options = [{ value: "last-12-months", label: "Last 12 months" }];
+  for (const date = new Date(now.getFullYear(), now.getMonth(), 1); date >= first; date.setMonth(date.getMonth() - 1)) {
+    options.push({ value: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`, label: date.toLocaleDateString("en-GB", { month: "long", year: "numeric" }) });
+  }
+  return options;
+}
+
+function getMonthRange(value) {
+  if (value === "last-12-months") {
+    const now = new Date();
+    return {
+      after: new Date(Date.UTC(now.getFullYear(), now.getMonth() - 11, 1)).toISOString(),
+      before: new Date(Date.UTC(now.getFullYear(), now.getMonth() + 1, 1)).toISOString(),
+    };
+  }
+  const [year, month] = value.split("-").map(Number);
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const end = new Date(Date.UTC(year, month, 1));
+  return { after: start.toISOString(), before: end.toISOString() };
+}
+
 function normalizeArticles(raw, segment) {
   try {
+    if (Array.isArray(raw)) {
+      return raw.map((it) => ({
+        id: String(it.id), headline: stripHtml(it.title?.rendered), subheading: stripHtml(it.excerpt?.rendered),
+        byline: stripHtml(it._embedded?.author?.[0]?.name || ""), publish_date: it.date,
+        body_text: stripHtml(it.content?.rendered), url: it.link, segment,
+      }));
+    }
     if (Array.isArray(raw?.list?.[0]?.items)) {
       return raw.list[0].items.map((it) => ({
         id: String(it.id), headline: it.headline || it.title, subheading: it.introduction,
@@ -135,7 +183,7 @@ function normalizeArticles(raw, segment) {
 
 function downloadCsv(rows, filename) {
   const esc = (v) => { const s = String(v ?? ""); return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s; };
-  const header = ["segment", "headline", "url", "byline", "publish_date", "verdict", "top_finding", "why_it_hurts", "fix", "ymyl_score", "experience", "expertise", "authoritativeness", "trustworthiness", "information_gain_score", "spam_risk"];
+  const header = ["segment", "headline", "url", "byline", "publish_date", "verdict", "top_finding", "evidence", "why_it_hurts", "fix", "optimization_steps", "expected_improvement", "ymyl_score", "experience", "expertise", "authoritativeness", "trustworthiness", "information_gain_score", "spam_risk"];
   const lines = [header.join(",")];
   rows.forEach((r) => lines.push(header.map((h) => esc(r[h])).join(",")));
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
@@ -177,6 +225,7 @@ function App() {
   const [step, setStep] = useState(1);
   const [categoriesJson, setCategoriesJson] = useState("");
   const [segments, setSegments] = useState([]);
+  const [segmentIds, setSegmentIds] = useState({});
   const [segmentArticles, setSegmentArticles] = useState({});
   const [activeSegment, setActiveSegment] = useState("");
   const [articlesJson, setArticlesJson] = useState("");
@@ -191,17 +240,25 @@ function App() {
   const [segmentSearch, setSegmentSearch] = useState("");
   const [savedAnalyses, setSavedAnalyses] = useState(getSavedAnalyses());
   const [savedMsg, setSavedMsg] = useState("");
+  const monthOptions = getMonthOptions();
+  const [selectedMonth, setSelectedMonth] = useState(monthOptions[0].value);
 
   function loadSegments() {
     try {
       const parsed = JSON.parse(categoriesJson);
-      const slugs = Array.isArray(parsed) ? parsed.map((c) => c.slug).filter(Boolean) : [];
+      const categories = Array.isArray(parsed) ? parsed.filter((c) => c?.slug && c?.id) : [];
+      const slugs = categories.map((c) => c.slug);
       if (slugs.length === 0) throw new Error("empty");
-      setSegments(slugs); setActiveSegment(slugs[0]); setStep(2); setLoadMsg("");
+      setSegments(slugs); setSegmentIds(Object.fromEntries(categories.map((c) => [c.slug, c.id]))); setActiveSegment(slugs[0]); setStep(2); setLoadMsg("");
     } catch (e) { setLoadMsg("Could not read that as a segment list. Paste the full array."); }
   }
 
   function selectSegment(seg) { setActiveSegment(seg); setArticlesJson(""); setLoadMsg(""); }
+
+  function selectMonth(value) {
+    setSelectedMonth(value); setSegmentArticles({}); setSegmentOffsets({}); setSegmentStatus({});
+    setResults({}); setArticlesJson(""); setLoadMsg(""); setStep(2);
+  }
 
   function loadArticlesForSegment() {
     let parsed;
@@ -222,10 +279,14 @@ function App() {
       return;
     }
 
-    const arts = normalizeArticles(parsed, activeSegment);
+    const { after, before } = getMonthRange(selectedMonth);
+    const arts = normalizeArticles(parsed, activeSegment).filter((article) => {
+      const published = new Date(String(article.publish_date).replace(" ", "T"));
+      return !Number.isNaN(published.getTime()) && published >= new Date(after) && published < new Date(before);
+    });
     if (arts.length === 0) {
-      setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: "The JSON structure was not recognised as article data." } }));
-      setLoadMsg(`✕ No articles were found for "${activeSegment}".`);
+      setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: "No recognised articles matched the selected month." } }));
+      setLoadMsg(`✕ No articles were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.`);
       return;
     }
 
@@ -282,7 +343,8 @@ function App() {
         segment: a?.segment, headline: a?.headline, url: a?.url, byline: a?.byline, publish_date: a?.publish_date,
         verdict: r.verdict || r.overall_health,
         top_finding: top ? `${top.severity === "red" ? "RED" : "YELLOW"} ${top.issue_name}: ${top.what_is_wrong}` : "None",
-        why_it_hurts: top?.why_it_hurts, fix: top?.fix,
+        evidence: top?.evidence, why_it_hurts: top?.why_it_hurts, fix: top?.fix,
+        optimization_steps: top?.optimization_steps?.join(" | "), expected_improvement: top?.expected_improvement,
         ymyl_score: r.ymyl_score ?? "", experience: r.experience ?? r.experience_score ?? "", expertise: r.expertise ?? "",
         authoritativeness: r.authoritativeness ?? "", trustworthiness: r.trustworthiness ?? r.trust_score ?? "",
         information_gain_score: r.information_gain_score ?? "", spam_risk: r.spam_risk ?? "",
@@ -317,7 +379,7 @@ function App() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
+      <div className="page-header">
         <div><h1 style={st.h1}>FE Content Audit</h1><p style={st.subtitle}>Load segments and articles, review the selection, then analyse content risks.</p></div>
         <button style={st.btnOutline} onClick={() => { clearSession(); setAuthed(false); }}>Log out</button>
       </div>
@@ -329,9 +391,9 @@ function App() {
         {savedAnalyses.length === 0 ? <p style={st.caption}>No saved analyses yet.</p> : (
           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
             {savedAnalyses.map((entry) => (
-              <div key={entry.timestamp} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.canvas, borderRadius: "8px", padding: "10px 14px", fontSize: "13px" }}>
+              <div className="saved-row" key={entry.timestamp} style={{ alignItems: "center", background: C.canvas, borderRadius: "8px", padding: "10px 14px", fontSize: "13px" }}>
                 <span><strong>{new Date(entry.timestamp).toLocaleString()}</strong> — {entry.articleCount} articles · {entry.segments.join(", ")}</span>
-                <span style={{ display: "flex", gap: "6px" }}>
+                <span className="saved-actions">
                   <button style={{ ...st.btnOutline, padding: "5px 14px", fontSize: "12px" }} onClick={() => exportSavedCsv(entry)}>Export CSV</button>
                   <button style={{ ...st.btnOutlineError, padding: "5px 14px", fontSize: "12px" }} onClick={() => deleteSaved(entry.timestamp)}>Delete</button>
                 </span>
@@ -354,7 +416,8 @@ function App() {
       {step >= 2 && (
         <div style={st.card}>
           <p style={st.stepTitle}>Step 2 — Load articles for each segment</p>
-          <p style={st.stepDesc}>Search for and select a segment, then open its link to retrieve articles.</p>
+          <p style={st.stepDesc}>Review the last 12 months or choose a specific month from the current or previous year. Then select a segment and open its article link.</p>
+          <label style={{ display: "block", fontSize: "13px", fontWeight: 700, marginBottom: "12px" }}>Publication month<br /><select aria-label="Publication month" style={{ width: "100%", marginTop: "6px" }} value={selectedMonth} onChange={(e) => selectMonth(e.target.value)}>{monthOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
           <input style={{ width: "100%", marginBottom: "10px" }} placeholder="Search segments" value={segmentSearch} onChange={(e) => setSegmentSearch(e.target.value)} />
           <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "14px", maxHeight: "140px", overflowY: "auto" }}>
             {filteredSegments.map((sg) => {
@@ -372,9 +435,9 @@ function App() {
           {segmentStatus[activeSegment]?.type === "end-of-range" && <div style={{ background: C.successTint, color: C.success, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>✓ {segmentStatus[activeSegment].reason}</div>}
           {activeSegment && (
             <React.Fragment>
-              <p style={st.caption}>Loads the next {articlesPerPage} articles, starting at #{(segmentOffsets[activeSegment] || 0) + 1}:</p>
-              <a href={`https://www.financialexpress.com/wp-json/wp/v2/category/${activeSegment}/${segmentOffsets[activeSegment] || 0}/${articlesPerPage}`} target="_blank" rel="noopener noreferrer" style={{ ...st.link, marginBottom: "10px" }}>
-                https://www.financialexpress.com/wp-json/wp/v2/category/{activeSegment}/{segmentOffsets[activeSegment] || 0}/{articlesPerPage}
+              <p style={st.caption}>Loads page {Math.floor((segmentOffsets[activeSegment] || 0) / Number(articlesPerPage)) + 1} with up to {articlesPerPage} articles from {monthOptions.find((option) => option.value === selectedMonth)?.label}:</p>
+              <a href={`https://www.financialexpress.com/wp-json/wp/v2/posts?categories=${segmentIds[activeSegment]}&after=${encodeURIComponent(getMonthRange(selectedMonth).after)}&before=${encodeURIComponent(getMonthRange(selectedMonth).before)}&per_page=${articlesPerPage}&page=${Math.floor((segmentOffsets[activeSegment] || 0) / Number(articlesPerPage)) + 1}&_embed=author`} target="_blank" rel="noopener noreferrer" style={{ ...st.link, marginBottom: "10px" }}>
+                Open the FE article page for {activeSegment} · {monthOptions.find((option) => option.value === selectedMonth)?.label}
               </a>
               <textarea style={{ minHeight: "80px" }} value={articlesJson} onChange={(e) => setArticlesJson(e.target.value)} placeholder="Paste the complete article JSON here" />
               <div style={{ marginTop: "10px" }}><button style={st.btnPrimary} onClick={loadArticlesForSegment}>Add these articles to "{activeSegment}"</button></div>
@@ -441,15 +504,15 @@ function App() {
                 const isMid = badgeLabel === "Borderline" || badgeLabel === "Needs Work";
                 return (
                   <div key={id} style={{ border: `1px solid ${C.hairline}`, borderRadius: "12px", padding: "14px 16px", marginBottom: "10px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <p style={{ fontWeight: 700, fontSize: "14px", margin: 0 }}>{a?.headline}</p>
+                    <div className="result-header">
+                      <p style={{ fontWeight: 700, fontSize: "14px", margin: 0 }}>{a?.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: C.linkBlue }}>{a.headline}</a> : a?.headline}</p>
                       <span style={{ fontSize: "12px", padding: "3px 12px", borderRadius: "90px", background: isBad ? C.errorTint : isMid ? C.warnTint : C.successTint, color: isBad ? C.error : isMid ? C.warn : C.success, fontWeight: 700, whiteSpace: "nowrap" }}>{badgeLabel}</span>
                     </div>
                     <p style={{ ...st.caption, margin: "4px 0 10px" }}>{a?.segment} · {a?.byline || "No byline"} · {formatDate(a?.publish_date)}</p>
                     {r.spam_risk && r.spam_risk !== "none" && <p style={{ fontSize: "12px", color: C.error, fontWeight: 700, margin: "0 0 8px" }}>⚠ Spam risk: {r.spam_risk}</p>}
                     {r.findings?.map((f, i) => (
                       <div key={i} style={{ fontSize: "13px", marginBottom: "8px", paddingLeft: "10px", borderLeft: `3px solid ${f.severity === "red" ? C.error : C.warn}` }}>
-                        <strong>● {f.issue_name}</strong><br />{f.what_is_wrong}<br /><span style={{ color: C.inkMute }}>{f.why_it_hurts}</span><br /><span style={{ color: C.inkMute }}>Fix: {f.fix}</span>
+                        <strong>● {f.issue_name}</strong><br /><strong>Evidence:</strong> {f.evidence}<br />{f.what_is_wrong}<br /><span style={{ color: C.inkMute }}>{f.why_it_hurts}</span><br /><strong>How to improve:</strong><ol style={{ margin: "6px 0 4px", paddingLeft: "20px" }}>{(f.optimization_steps || [f.fix]).map((step, stepIndex) => <li key={stepIndex}>{step}</li>)}</ol>{f.expected_improvement && <span style={{ color: C.inkMute }}><strong>Expected improvement:</strong> {f.expected_improvement}</span>}
                       </div>
                     ))}
                     {r.bottom_line && <p style={{ fontSize: "13px", fontStyle: "italic", marginTop: "8px" }}>{r.bottom_line}</p>}

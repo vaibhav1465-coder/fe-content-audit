@@ -23,7 +23,7 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   await page.route("**/api/analyze", async (route) => {
     analysisCalls += 1;
     expect(route.request().headers().authorization).toBe("Bearer test-token");
-    await route.fulfill({ json: { overall_health: "Needs Work", findings: [{ severity: "yellow", issue_name: "Sourcing", what_is_wrong: "The article cites no expert.", why_it_hurts: "The claim lacks authority.", fix: "Add a qualified source." }], bottom_line: "Add expert sourcing.", ymyl_score: 3, experience: 3, expertise: 2, authoritativeness: 2, trustworthiness: 3 } });
+    await route.fulfill({ json: { overall_health: "Needs Work", findings: [{ severity: "yellow", issue_name: "Sourcing", evidence: "Article body", what_is_wrong: "The article cites no expert.", why_it_hurts: "The claim lacks authority.", fix: "Add a qualified source.", optimization_steps: ["Identify the main claim.", "Ask a qualified expert to explain it."], expected_improvement: "This will make the article more authoritative and useful." }], bottom_line: "Add expert sourcing.", ymyl_score: 3, experience: 3, expertise: 2, authoritativeness: 2, trustworthiness: 3 } });
   });
 
   await page.goto("/");
@@ -32,9 +32,12 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   await page.getByRole("button", { name: "Log in" }).click();
   await expect(page.getByText("Step 1 — Load segments")).toBeVisible();
 
-  await page.getByPlaceholder("Paste the complete segment JSON here").fill(JSON.stringify([{ slug: "markets" }]));
+  await page.getByPlaceholder("Paste the complete segment JSON here").fill(JSON.stringify([{ id: 5, slug: "markets" }]));
   await page.getByRole("button", { name: "Load segments" }).click();
   await expect(page.getByText("✓ 1 segments loaded.")).toBeVisible();
+  await expect(page.getByLabel("Publication month")).toHaveValue("last-12-months");
+  expect(await page.getByLabel("Publication month").locator("option").count()).toBeGreaterThanOrEqual(13);
+  await expect(page.getByRole("link", { name: /Open the FE article page/ })).toHaveAttribute("href", /wp-json\/wp\/v2\/posts\?categories=5.*after=.*before=/);
 
   await page.getByPlaceholder("Paste the complete article JSON here").fill(JSON.stringify(articlePayload));
   await page.getByRole("button", { name: /Add these articles/ }).click();
@@ -42,6 +45,8 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   await expect(page.getByText("Market update")).toBeVisible();
   await page.getByRole("button", { name: "Analyse all 1 articles" }).click();
   await expect(page.getByText("Add expert sourcing.")).toBeVisible();
+  await expect(page.getByText("Evidence:")).toBeVisible();
+  await expect(page.getByText("Ask a qualified expert to explain it.")).toBeVisible();
 
   await page.getByRole("button", { name: "Save analysis" }).click();
   await expect(page.getByText("✓ Saved 1 articles in this browser.")).toBeVisible();
@@ -51,4 +56,19 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   expect(download.suggestedFilename()).toMatch(/^fe-audit-\d{4}-\d{2}-\d{2}\.csv$/);
   expect(authCalls).toBe(1);
   expect(analysisCalls).toBe(1);
+});
+
+test("the authentication and audit workflow remain usable on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "FE Content Audit" })).toBeVisible();
+  await expect(page.getByPlaceholder("Password")).toBeInViewport();
+  await page.evaluate(() => {
+    sessionStorage.setItem("fe_session_token", "mobile-token");
+    sessionStorage.setItem("fe_session_expires", String(Date.now() + 60_000));
+  });
+  await page.reload();
+  await expect(page.getByText("Step 1 — Load segments")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Load segments" })).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
