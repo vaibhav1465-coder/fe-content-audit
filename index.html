@@ -63,6 +63,7 @@ const st = {
 const SESSION_KEY = "fe_session_token";
 const SESSION_EXPIRY_KEY = "fe_session_expires";
 const MEMORY_KEY = "fe_saved_analyses";
+const ANALYSIS_INTERVAL_MS = 4200;
 
 function getStoredSession() {
   const token = sessionStorage.getItem(SESSION_KEY);
@@ -117,6 +118,8 @@ async function callAnalyzeApi(article, mode) {
   return response.json();
 }
 
+function wait(ms) { return new Promise((resolve) => window.setTimeout(resolve, ms)); }
+
 function detectWpRestError(parsed) {
   if (parsed && typeof parsed === "object" && parsed.code && parsed.data?.status) {
     return { status: parsed.data.status, code: parsed.code };
@@ -135,6 +138,22 @@ function stripHtml(value) {
   const element = document.createElement("textarea");
   element.innerHTML = String(value || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   return element.value;
+}
+
+function formatByline(value) {
+  return String(value || "").replace(/^cap-/, "").split("-").filter(Boolean).map((part) => part.toLowerCase() === "fe" ? "FE" : part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
+async function resolveBylines(articles) {
+  const ids = [...new Set(articles.flatMap((article) => article._coauthorIds || []))];
+  if (!ids.length) return articles;
+  try {
+    const response = await fetch(`https://www.financialexpress.com/wp-json/wp/v2/coauthors?include=${ids.join(",")}&per_page=100`);
+    if (!response.ok) return articles;
+    const authors = await response.json();
+    const names = Object.fromEntries(authors.map((author) => [String(author.id), formatByline(author.name || author.slug)]));
+    return articles.map((article) => ({ ...article, byline: (article._coauthorIds || []).map((id) => names[String(id)]).filter(Boolean).join(", ") || article.byline }));
+  } catch { return articles; }
 }
 
 function getMonthOptions() {
@@ -166,7 +185,7 @@ function normalizeArticles(raw, segment) {
     if (Array.isArray(raw)) {
       return raw.map((it) => ({
         id: String(it.id), headline: stripHtml(it.title?.rendered), subheading: stripHtml(it.excerpt?.rendered),
-        byline: stripHtml(it._embedded?.author?.[0]?.name || ""), publish_date: it.date,
+        byline: formatByline(it.class_list?.find((item) => item.startsWith("author-"))?.slice(7)), _coauthorIds: it.coauthors || [], publish_date: it.date,
         body_text: stripHtml(it.content?.rendered), url: it.link, segment,
       }));
     }
@@ -260,7 +279,7 @@ function App() {
     setResults({}); setArticlesJson(""); setLoadMsg(""); setStep(2);
   }
 
-  function loadArticlesForSegment() {
+  async function loadArticlesForSegment() {
     let parsed;
     try { parsed = JSON.parse(articlesJson); }
     catch (e) { setLoadMsg("Could not read that as JSON."); return; }
@@ -280,10 +299,11 @@ function App() {
     }
 
     const { after, before } = getMonthRange(selectedMonth);
-    const arts = normalizeArticles(parsed, activeSegment).filter((article) => {
+    const normalized = normalizeArticles(parsed, activeSegment).filter((article) => {
       const published = new Date(String(article.publish_date).replace(" ", "T"));
       return !Number.isNaN(published.getTime()) && published >= new Date(after) && published < new Date(before);
     });
+    const arts = await resolveBylines(normalized);
     if (arts.length === 0) {
       setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: "No recognised articles matched the selected month." } }));
       setLoadMsg(`✕ No articles were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.`);
@@ -312,9 +332,11 @@ function App() {
     const newResults = {};
     for (let i = 0; i < allArticles.length; i++) {
       setProgress(`Analyzing ${i + 1} of ${allArticles.length}...`);
+      const requestStarted = Date.now();
       try { newResults[allArticles[i].id] = await callAnalyzeApi(allArticles[i], analysisMode); }
       catch (e) { newResults[allArticles[i].id] = { overall_health: "Weak", findings: [{ severity: "red", issue_name: "Analysis failed", what_is_wrong: String(e.message || e), why_it_hurts: "", fix: "Retry" }], _failed: true }; }
       setResults({ ...newResults });
+      if (i < allArticles.length - 1) await wait(Math.max(0, ANALYSIS_INTERVAL_MS - (Date.now() - requestStarted)));
     }
     setProgress(""); setAnalyzing(false);
   }
@@ -327,9 +349,11 @@ function App() {
     const newResults = { ...results };
     for (let i = 0; i < toRetry.length; i++) {
       setProgress(`Retrying ${i + 1} of ${toRetry.length}...`);
+      const requestStarted = Date.now();
       try { newResults[toRetry[i].id] = await callAnalyzeApi(toRetry[i], analysisMode); }
       catch (e) { newResults[toRetry[i].id] = { overall_health: "Weak", findings: [{ severity: "red", issue_name: "Failed again", what_is_wrong: String(e.message || e), why_it_hurts: "", fix: "Retry" }], _failed: true }; }
       setResults({ ...newResults });
+      if (i < toRetry.length - 1) await wait(Math.max(0, ANALYSIS_INTERVAL_MS - (Date.now() - requestStarted)));
     }
     setProgress(""); setAnalyzing(false);
   }
@@ -436,7 +460,7 @@ function App() {
           {activeSegment && (
             <React.Fragment>
               <p style={st.caption}>Loads page {Math.floor((segmentOffsets[activeSegment] || 0) / Number(articlesPerPage)) + 1} with up to {articlesPerPage} articles from {monthOptions.find((option) => option.value === selectedMonth)?.label}:</p>
-              <a href={`https://www.financialexpress.com/wp-json/wp/v2/posts?categories=${segmentIds[activeSegment]}&after=${encodeURIComponent(getMonthRange(selectedMonth).after)}&before=${encodeURIComponent(getMonthRange(selectedMonth).before)}&per_page=${articlesPerPage}&page=${Math.floor((segmentOffsets[activeSegment] || 0) / Number(articlesPerPage)) + 1}&_embed=author`} target="_blank" rel="noopener noreferrer" style={{ ...st.link, marginBottom: "10px" }}>
+              <a href={`https://www.financialexpress.com/wp-json/wp/v2/posts?categories=${segmentIds[activeSegment]}&after=${encodeURIComponent(getMonthRange(selectedMonth).after)}&before=${encodeURIComponent(getMonthRange(selectedMonth).before)}&per_page=${articlesPerPage}&page=${Math.floor((segmentOffsets[activeSegment] || 0) / Number(articlesPerPage)) + 1}`} target="_blank" rel="noopener noreferrer" style={{ ...st.link, marginBottom: "10px" }}>
                 Open the FE article page for {activeSegment} · {monthOptions.find((option) => option.value === selectedMonth)?.label}
               </a>
               <textarea style={{ minHeight: "80px" }} value={articlesJson} onChange={(e) => setArticlesJson(e.target.value)} placeholder="Paste the complete article JSON here" />

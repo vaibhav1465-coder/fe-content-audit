@@ -2,7 +2,9 @@ import { expect, test } from "@playwright/test";
 import { server } from "../serve-dist.js";
 
 const articlePayload = {
-  list: [{ items: [{ id: 101, headline: "Market update", introduction: "Summary", byline: [{ name: "FE Desk" }], post_date: "2026-08-05 10:00:00", body_raw: "Article body", post_url: "https://example.com/market-update" }] }],
+  id: 101, date: "2026-08-05T10:00:00", link: "https://example.com/market-update",
+  title: { rendered: "Market update" }, excerpt: { rendered: "Summary" }, content: { rendered: "<p>Article body</p>" },
+  coauthors: [407], class_list: ["post-101", "author-cap-fe-desk"],
 };
 
 test.beforeAll(async () => {
@@ -23,7 +25,11 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   await page.route("**/api/analyze", async (route) => {
     analysisCalls += 1;
     expect(route.request().headers().authorization).toBe("Bearer test-token");
+    expect(route.request().postDataJSON().article.byline).toBe("FE Desk");
     await route.fulfill({ json: { overall_health: "Needs Work", findings: [{ severity: "yellow", issue_name: "Sourcing", evidence: "Article body", what_is_wrong: "The article cites no expert.", why_it_hurts: "The claim lacks authority.", fix: "Add a qualified source.", optimization_steps: ["Identify the main claim.", "Ask a qualified expert to explain it."], expected_improvement: "This will make the article more authoritative and useful." }], bottom_line: "Add expert sourcing.", ymyl_score: 3, experience: 3, expertise: 2, authoritativeness: 2, trustworthiness: 3 } });
+  });
+  await page.route("**/wp-json/wp/v2/coauthors?**", async (route) => {
+    await route.fulfill({ json: [{ id: 407, name: "fe-desk", slug: "cap-fe-desk" }] });
   });
 
   await page.goto("/");
@@ -39,10 +45,11 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   expect(await page.getByLabel("Publication month").locator("option").count()).toBeGreaterThanOrEqual(13);
   await expect(page.getByRole("link", { name: /Open the FE article page/ })).toHaveAttribute("href", /wp-json\/wp\/v2\/posts\?categories=5.*after=.*before=/);
 
-  await page.getByPlaceholder("Paste the complete article JSON here").fill(JSON.stringify(articlePayload));
+  await page.getByPlaceholder("Paste the complete article JSON here").fill(JSON.stringify([articlePayload]));
   await page.getByRole("button", { name: /Add these articles/ }).click();
   await page.getByRole("button", { name: /Continue to review/ }).click();
   await expect(page.getByText("Market update")).toBeVisible();
+  await expect(page.getByText(/FE Desk/)).toBeVisible();
   await page.getByRole("button", { name: "Analyse all 1 articles" }).click();
   await expect(page.getByText("Add expert sourcing.")).toBeVisible();
   await expect(page.getByText("Evidence:")).toBeVisible();

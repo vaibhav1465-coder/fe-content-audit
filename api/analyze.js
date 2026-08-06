@@ -57,7 +57,7 @@ const PER_MINUTE_LIMIT = Number(process.env.PER_MINUTE_LIMIT_PER_IP || 15);
 function buildUserPrompt(article) {
   const headline = String(article.headline || "(missing)").slice(0, 500);
   const subheading = String(article.subheading || "(missing)").slice(0, 500);
-  const byline = String(article.byline || "(missing)").slice(0, 200);
+  const byline = String(article.byline || "(unavailable from source API — do not treat this as evidence that the article has no byline)").slice(0, 200);
   const publishDate = String(article.publish_date || "(missing)").slice(0, 100);
   const segment = String(article.segment || "(missing)").slice(0, 100);
   const bodyText = String(article.body_text || "").slice(0, 8000);
