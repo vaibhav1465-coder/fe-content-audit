@@ -64,6 +64,12 @@ const SESSION_KEY = "fe_session_token";
 const SESSION_EXPIRY_KEY = "fe_session_expires";
 const MEMORY_KEY = "fe_saved_analyses";
 const ANALYSIS_INTERVAL_MS = 4200;
+const WP_BASE = "https://www.financialexpress.com/wp-json/wp/v2";
+const MAX_ARTICLES_PER_REQUEST = 100;
+const MAX_AUTO_PAGES_PER_SEGMENT = 20;
+const MAX_ANALYSIS_ARTICLES = 500;
+const BODY_TEXT_LIMIT = 8000;
+const ESTIMATED_TOKENS_PER_ARTICLE = 2600;
 
 function getStoredSession() {
   const token = sessionStorage.getItem(SESSION_KEY);
@@ -125,6 +131,43 @@ function detectWpRestError(parsed) {
     return { status: parsed.data.status, code: parsed.code };
   }
   return null;
+}
+
+function clampArticlesPerPage(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 50;
+  return Math.max(1, Math.min(MAX_ARTICLES_PER_REQUEST, Math.floor(parsed)));
+}
+
+function buildArticleUrl(categoryId, selectedMonthValue, perPage, page) {
+  const { after, before } = getMonthRange(selectedMonthValue);
+  const params = new URLSearchParams({
+    categories: String(categoryId),
+    after,
+    before,
+    per_page: String(clampArticlesPerPage(perPage)),
+    page: String(page),
+    orderby: "date",
+    order: "desc",
+  });
+  return `${WP_BASE}/posts?${params.toString()}`;
+}
+
+async function fetchJsonWithMeta(url) {
+  const response = await fetch(url);
+  const text = await response.text();
+  let parsed;
+  try { parsed = text ? JSON.parse(text) : null; }
+  catch (e) { throw new Error("The source API returned unreadable JSON."); }
+  if (!response.ok) {
+    const wpError = detectWpRestError(parsed);
+    throw new Error(wpError ? `${wpError.status} ${wpError.code.replace(/_/g, " ")}` : `HTTP ${response.status}`);
+  }
+  return {
+    data: parsed,
+    total: Number(response.headers.get("X-WP-Total") || 0),
+    totalPages: Number(response.headers.get("X-WP-TotalPages") || 1),
+  };
 }
 
 function formatDate(dateStr) {
@@ -251,6 +294,7 @@ function App() {
   const [loadMsg, setLoadMsg] = useState("");
   const [results, setResults] = useState({});
   const [analyzing, setAnalyzing] = useState(false);
+  const [loadingArticles, setLoadingArticles] = useState(false);
   const [progress, setProgress] = useState("");
   const [articlesPerPage, setArticlesPerPage] = useState(50);
   const [segmentOffsets, setSegmentOffsets] = useState({});
@@ -262,14 +306,37 @@ function App() {
   const monthOptions = getMonthOptions();
   const [selectedMonth, setSelectedMonth] = useState(monthOptions[0].value);
 
-  function loadSegments() {
+  function applySegments(categories) {
+    const cleanCategories = categories.filter((c) => c?.slug && c?.id && Number(c.count || 0) > 0);
+    const slugs = cleanCategories.map((c) => c.slug);
+    if (slugs.length === 0) throw new Error("No active segments were found.");
+    setSegments(slugs);
+    setSegmentIds(Object.fromEntries(cleanCategories.map((c) => [c.slug, c.id])));
+    setActiveSegment(slugs[0]);
+    setStep(2);
+  }
+
+  async function loadSegments() {
+    setLoadMsg("Loading all active FE segments...");
     try {
-      const parsed = JSON.parse(categoriesJson);
-      const categories = Array.isArray(parsed) ? parsed.filter((c) => c?.slug && c?.id) : [];
-      const slugs = categories.map((c) => c.slug);
-      if (slugs.length === 0) throw new Error("empty");
-      setSegments(slugs); setSegmentIds(Object.fromEntries(categories.map((c) => [c.slug, c.id]))); setActiveSegment(slugs[0]); setStep(2); setLoadMsg("");
-    } catch (e) { setLoadMsg("Could not read that as a segment list. Paste the full array."); }
+      const first = await fetchJsonWithMeta(`${WP_BASE}/categories?per_page=100&page=1`);
+      let categories = Array.isArray(first.data) ? first.data : [];
+      for (let page = 2; page <= first.totalPages; page++) {
+        const next = await fetchJsonWithMeta(`${WP_BASE}/categories?per_page=100&page=${page}`);
+        categories = categories.concat(Array.isArray(next.data) ? next.data : []);
+      }
+      applySegments(categories);
+      setLoadMsg(`${categories.filter((c) => c?.slug && c?.id && Number(c.count || 0) > 0).length} active segments loaded.`);
+    } catch (apiError) {
+      try {
+        const parsed = JSON.parse(categoriesJson);
+        const categories = Array.isArray(parsed) ? parsed : [];
+        applySegments(categories);
+        setLoadMsg(`${categories.length} pasted segments loaded.`);
+      } catch (pasteError) {
+        setLoadMsg(`Could not load segments automatically. ${apiError.message}. You can still paste the full category JSON and try again.`);
+      }
+    }
   }
 
   function selectSegment(seg) { setActiveSegment(seg); setArticlesJson(""); setLoadMsg(""); }
@@ -279,34 +346,29 @@ function App() {
     setResults({}); setArticlesJson(""); setLoadMsg(""); setStep(2);
   }
 
-  async function loadArticlesForSegment() {
-    let parsed;
-    try { parsed = JSON.parse(articlesJson); }
-    catch (e) { setLoadMsg("Could not read that as JSON."); return; }
-
-    const wpError = detectWpRestError(parsed);
-    const currentOffset = segmentOffsets[activeSegment] || 0;
+  async function addArticlesFromRaw(raw, currentOffset) {
+    const wpError = detectWpRestError(raw);
 
     if (wpError) {
       if (currentOffset === 0) {
-        setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: `${wpError.status} ${wpError.code.replace(/_/g, " ")} — the first page failed, so this segment is probably unavailable through FE's article API.` } }));
-        setLoadMsg(`✕ "${activeSegment}" is unavailable through this API.`);
+        setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: `${wpError.status} ${wpError.code.replace(/_/g, " ")} - the first page failed, so this segment is probably unavailable through FE's article API.` } }));
+        setLoadMsg(`"${activeSegment}" is unavailable through this API.`);
       } else {
         setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "end-of-range", reason: `Reached the end of available articles (no more after #${currentOffset}).` } }));
-        setLoadMsg(`✓ All available articles in "${activeSegment}" have been loaded.`);
+        setLoadMsg(`All available articles in "${activeSegment}" have been loaded.`);
       }
       return;
     }
 
     const { after, before } = getMonthRange(selectedMonth);
-    const normalized = normalizeArticles(parsed, activeSegment).filter((article) => {
+    const normalized = normalizeArticles(raw, activeSegment).filter((article) => {
       const published = new Date(String(article.publish_date).replace(" ", "T"));
       return !Number.isNaN(published.getTime()) && published >= new Date(after) && published < new Date(before);
     });
     const arts = await resolveBylines(normalized);
     if (arts.length === 0) {
       setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: "No recognised articles matched the selected month." } }));
-      setLoadMsg(`✕ No articles were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.`);
+      setLoadMsg(`No articles were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.`);
       return;
     }
 
@@ -316,9 +378,56 @@ function App() {
       const existingIds = new Set(existing.map((a) => a.id));
       return { ...prev, [activeSegment]: [...existing, ...arts.filter((a) => !existingIds.has(a.id))] };
     });
-    setSegmentOffsets((prev) => ({ ...prev, [activeSegment]: currentOffset + Number(articlesPerPage) }));
+    setSegmentOffsets((prev) => ({ ...prev, [activeSegment]: currentOffset + clampArticlesPerPage(articlesPerPage) }));
     setArticlesJson("");
-    setLoadMsg(`✓ Added ${arts.length} articles to "${activeSegment}".`);
+    setLoadMsg(`Added ${arts.length} articles to "${activeSegment}".`);
+  }
+
+  async function loadArticlesForSegment() {
+    if (!activeSegment || !segmentIds[activeSegment]) { setLoadMsg("Select a segment first."); return; }
+    const perPage = clampArticlesPerPage(articlesPerPage);
+    const page = Math.floor((segmentOffsets[activeSegment] || 0) / perPage) + 1;
+    setLoadMsg(`Loading page ${page} for "${activeSegment}"...`);
+    try {
+      const result = await fetchJsonWithMeta(buildArticleUrl(segmentIds[activeSegment], selectedMonth, perPage, page));
+      await addArticlesFromRaw(result.data, segmentOffsets[activeSegment] || 0);
+      if (page >= result.totalPages) {
+        setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "end-of-range", reason: `Loaded all ${result.total} available articles for this date range.` } }));
+      }
+    } catch (apiError) {
+      if (articlesJson.trim()) {
+        try { await addArticlesFromRaw(JSON.parse(articlesJson), segmentOffsets[activeSegment] || 0); }
+        catch (pasteError) { setLoadMsg(`Could not load articles. ${apiError.message}`); }
+      } else {
+        setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: apiError.message } }));
+        setLoadMsg(`Could not load articles for "${activeSegment}". ${apiError.message}`);
+      }
+    }
+  }
+
+  async function loadAllPagesForSegment() {
+    if (!activeSegment || !segmentIds[activeSegment]) { setLoadMsg("Select a segment first."); return; }
+    const perPage = clampArticlesPerPage(articlesPerPage);
+    const startPage = Math.floor((segmentOffsets[activeSegment] || 0) / perPage) + 1;
+    setLoadingArticles(true);
+    try {
+      let total = 0;
+      let totalPages = startPage;
+      for (let page = startPage; page <= totalPages && page < startPage + MAX_AUTO_PAGES_PER_SEGMENT; page++) {
+        setLoadMsg(`Loading ${activeSegment}, page ${page}...`);
+        const result = await fetchJsonWithMeta(buildArticleUrl(segmentIds[activeSegment], selectedMonth, perPage, page));
+        total = result.total;
+        totalPages = result.totalPages;
+        await addArticlesFromRaw(result.data, (page - 1) * perPage);
+        if (!Array.isArray(result.data) || result.data.length === 0) break;
+      }
+      const reachedCap = totalPages >= startPage + MAX_AUTO_PAGES_PER_SEGMENT;
+      setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: reachedCap ? "ok" : "end-of-range", reason: reachedCap ? `Paused after ${MAX_AUTO_PAGES_PER_SEGMENT} pages. Load again to continue.` : `Loaded all ${total} available articles for this date range.` } }));
+      setLoadMsg(reachedCap ? `Loaded another ${MAX_AUTO_PAGES_PER_SEGMENT} pages for "${activeSegment}". Load again to continue.` : `Loaded all available articles for "${activeSegment}".`);
+    } catch (error) {
+      setLoadMsg(`Could not finish loading "${activeSegment}". ${error.message}`);
+    }
+    setLoadingArticles(false);
   }
 
   const totalArticles = Object.values(segmentArticles).flat().length;
@@ -327,8 +436,14 @@ function App() {
   const filteredSegments = segments.filter((sg) => sg.toLowerCase().includes(segmentSearch.toLowerCase()));
 
   async function analyzeAll() {
-    setAnalyzing(true); setStep(4);
     const allArticles = Object.values(segmentArticles).flat();
+    if (allArticles.length > MAX_ANALYSIS_ARTICLES) {
+      setLoadMsg(`This run has ${allArticles.length} articles. Reduce it to ${MAX_ANALYSIS_ARTICLES} or fewer before analysing.`);
+      return;
+    }
+    const estimate = allArticles.length * ESTIMATED_TOKENS_PER_ARTICLE;
+    if (allArticles.length > 25 && !window.confirm(`This will send ${allArticles.length} articles to Claude, roughly ${estimate.toLocaleString()} tokens before retries. Continue?`)) return;
+    setAnalyzing(true); setStep(4);
     const newResults = {};
     for (let i = 0; i < allArticles.length; i++) {
       setProgress(`Analyzing ${i + 1} of ${allArticles.length}...`);
@@ -385,7 +500,7 @@ function App() {
     const entry = { timestamp: new Date().toISOString(), mode: analysisMode, segments: [...new Set(rows.map((r) => r.segment))], articleCount: rows.length, rows };
     addSavedAnalysis(entry);
     setSavedAnalyses(getSavedAnalyses());
-    setSavedMsg(`✓ Saved ${rows.length} articles in this browser.`);
+    setSavedMsg(`Saved ${rows.length} articles in this browser.`);
   }
 
   function deleteSaved(timestamp) { deleteSavedAnalysis(timestamp); setSavedAnalyses(getSavedAnalyses()); }
@@ -416,7 +531,7 @@ function App() {
           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
             {savedAnalyses.map((entry) => (
               <div className="saved-row" key={entry.timestamp} style={{ alignItems: "center", background: C.canvas, borderRadius: "8px", padding: "10px 14px", fontSize: "13px" }}>
-                <span><strong>{new Date(entry.timestamp).toLocaleString()}</strong> — {entry.articleCount} articles · {entry.segments.join(", ")}</span>
+                <span><strong>{new Date(entry.timestamp).toLocaleString()}</strong> - {entry.articleCount} articles - {entry.segments.join(", ")}</span>
                 <span className="saved-actions">
                   <button style={{ ...st.btnOutline, padding: "5px 14px", fontSize: "12px" }} onClick={() => exportSavedCsv(entry)}>Export CSV</button>
                   <button style={{ ...st.btnOutlineError, padding: "5px 14px", fontSize: "12px" }} onClick={() => deleteSaved(entry.timestamp)}>Delete</button>
@@ -428,26 +543,26 @@ function App() {
       </div>
 
       <div style={st.card}>
-        <p style={st.stepTitle}>Step 1 — Load segments</p>
-        <p style={st.stepDesc}>Open the link, copy the complete response, and paste it below.</p>
+        <p style={st.stepTitle}>Step 1 - Load segments</p>
+        <p style={st.stepDesc}>Load all active FE segments from the WordPress API. Paste JSON only if automatic loading is unavailable.</p>
         <a href="https://www.financialexpress.com/wp-json/wp/v2/categories?per_page=100" target="_blank" rel="noopener noreferrer" style={st.link}>https://www.financialexpress.com/wp-json/wp/v2/categories?per_page=100</a>
-        <textarea style={{ minHeight: "80px", marginTop: "10px" }} value={categoriesJson} onChange={(e) => setCategoriesJson(e.target.value)} placeholder="Paste the complete segment JSON here" />
-        <div style={{ marginTop: "12px" }}><button style={st.btnPrimary} onClick={loadSegments}>Load segments</button></div>
-        {segments.length > 0 && <p style={{ fontSize: "13px", color: C.success, marginTop: "10px", fontWeight: 700 }}>✓ {segments.length} segments loaded.</p>}
+        <textarea style={{ minHeight: "80px", marginTop: "10px" }} value={categoriesJson} onChange={(e) => setCategoriesJson(e.target.value)} placeholder="Optional fallback: paste the complete segment JSON here" />
+        <div style={{ marginTop: "12px" }}><button style={st.btnPrimary} onClick={loadSegments}>Load all segments</button></div>
+        {segments.length > 0 && <p style={{ fontSize: "13px", color: C.success, marginTop: "10px", fontWeight: 700 }}>Loaded {segments.length} active segments.</p>}
         {loadMsg && step === 1 && <p style={{ fontSize: "13px", color: C.error, marginTop: "8px" }}>{loadMsg}</p>}
       </div>
 
       {step >= 2 && (
         <div style={st.card}>
-          <p style={st.stepTitle}>Step 2 — Load articles for each segment</p>
-          <p style={st.stepDesc}>Review the last 12 months or choose a specific month from the current or previous year. Then select a segment and open its article link.</p>
+          <p style={st.stepTitle}>Step 2 - Load articles for each segment</p>
+          <p style={st.stepDesc}>Choose the date range, select a segment, then load one page or all available pages for that segment.</p>
           <label style={{ display: "block", fontSize: "13px", fontWeight: 700, marginBottom: "12px" }}>Publication month<br /><select aria-label="Publication month" style={{ width: "100%", marginTop: "6px" }} value={selectedMonth} onChange={(e) => selectMonth(e.target.value)}>{monthOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
           <input style={{ width: "100%", marginBottom: "10px" }} placeholder="Search segments" value={segmentSearch} onChange={(e) => setSegmentSearch(e.target.value)} />
           <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "14px", maxHeight: "140px", overflowY: "auto" }}>
             {filteredSegments.map((sg) => {
               const status = segmentStatus[sg];
               const pillStyle = sg === activeSegment ? st.pillTagActive : status?.type === "unsupported" ? st.pillTagBad : st.pillTag;
-              return <button key={sg} style={pillStyle} onClick={() => selectSegment(sg)}>{status?.type === "unsupported" && "✕ "}{status?.type === "ok" && "✓ "}{sg}{segmentArticles[sg]?.length ? ` (${segmentArticles[sg].length})` : ""}</button>;
+              return <button key={sg} style={pillStyle} onClick={() => selectSegment(sg)}>{status?.type === "unsupported" && "Unavailable "}{status?.type === "ok" && "Loaded "}{sg}{segmentArticles[sg]?.length ? ` (${segmentArticles[sg].length})` : ""}</button>;
             })}
           </div>
           <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "10px" }}>
@@ -455,23 +570,26 @@ function App() {
             <label style={st.caption}>Articles per load:</label>
             <input type="number" style={{ width: "60px" }} value={articlesPerPage} onChange={(e) => setArticlesPerPage(e.target.value)} />
           </div>
-          {segmentStatus[activeSegment]?.type === "unsupported" && <div style={{ background: C.errorTint, color: C.error, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>✕ {segmentStatus[activeSegment].reason}</div>}
-          {segmentStatus[activeSegment]?.type === "end-of-range" && <div style={{ background: C.successTint, color: C.success, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>✓ {segmentStatus[activeSegment].reason}</div>}
+          {segmentStatus[activeSegment]?.type === "unsupported" && <div style={{ background: C.errorTint, color: C.error, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
+          {segmentStatus[activeSegment]?.type === "end-of-range" && <div style={{ background: C.successTint, color: C.success, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
           {activeSegment && (
             <React.Fragment>
-              <p style={st.caption}>Loads page {Math.floor((segmentOffsets[activeSegment] || 0) / Number(articlesPerPage)) + 1} with up to {articlesPerPage} articles from {monthOptions.find((option) => option.value === selectedMonth)?.label}:</p>
-              <a href={`https://www.financialexpress.com/wp-json/wp/v2/posts?categories=${segmentIds[activeSegment]}&after=${encodeURIComponent(getMonthRange(selectedMonth).after)}&before=${encodeURIComponent(getMonthRange(selectedMonth).before)}&per_page=${articlesPerPage}&page=${Math.floor((segmentOffsets[activeSegment] || 0) / Number(articlesPerPage)) + 1}`} target="_blank" rel="noopener noreferrer" style={{ ...st.link, marginBottom: "10px" }}>
-                Open the FE article page for {activeSegment} · {monthOptions.find((option) => option.value === selectedMonth)?.label}
+              <p style={st.caption}>Next page: {Math.floor((segmentOffsets[activeSegment] || 0) / clampArticlesPerPage(articlesPerPage)) + 1}. Each page loads up to {clampArticlesPerPage(articlesPerPage)} articles from {monthOptions.find((option) => option.value === selectedMonth)?.label}.</p>
+              <a href={buildArticleUrl(segmentIds[activeSegment], selectedMonth, articlesPerPage, Math.floor((segmentOffsets[activeSegment] || 0) / clampArticlesPerPage(articlesPerPage)) + 1)} target="_blank" rel="noopener noreferrer" style={{ ...st.link, marginBottom: "10px" }}>
+                Open the FE article page for {activeSegment} - {monthOptions.find((option) => option.value === selectedMonth)?.label}
               </a>
-              <textarea style={{ minHeight: "80px" }} value={articlesJson} onChange={(e) => setArticlesJson(e.target.value)} placeholder="Paste the complete article JSON here" />
-              <div style={{ marginTop: "10px" }}><button style={st.btnPrimary} onClick={loadArticlesForSegment}>Add these articles to "{activeSegment}"</button></div>
+              <textarea style={{ minHeight: "80px" }} value={articlesJson} onChange={(e) => setArticlesJson(e.target.value)} placeholder="Optional fallback: paste the complete article JSON here" />
+              <div style={{ marginTop: "10px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button style={st.btnPrimary} onClick={loadArticlesForSegment} disabled={loadingArticles}>Load next page</button>
+                <button style={st.btnOutline} onClick={loadAllPagesForSegment} disabled={loadingArticles}>Load all available pages</button>
+              </div>
             </React.Fragment>
           )}
-          {loadMsg && <p style={{ fontSize: "13px", color: loadMsg.startsWith("✓") ? C.success : C.error, marginTop: "10px", fontWeight: 600 }}>{loadMsg}</p>}
+          {loadMsg && <p style={{ fontSize: "13px", color: /loaded|added|saved/i.test(loadMsg) ? C.success : C.error, marginTop: "10px", fontWeight: 600 }}>{loadMsg}</p>}
           {unsupportedSegments.length > 0 && (
             <div style={{ marginTop: "14px", borderTop: `1px solid ${C.hairline}`, paddingTop: "12px" }}>
               <p style={{ fontSize: "13px", fontWeight: 700, color: C.error, margin: "0 0 6px" }}>Segments unavailable through this API:</p>
-              {unsupportedSegments.map(([sg, v]) => <p key={sg} style={{ fontSize: "12px", color: C.error, margin: "0 0 4px" }}>✕ <strong>{sg}</strong>: {v.reason}</p>)}
+              {unsupportedSegments.map(([sg, v]) => <p key={sg} style={{ fontSize: "12px", color: C.error, margin: "0 0 4px" }}><strong>{sg}</strong>: {v.reason}</p>)}
             </div>
           )}
           {segmentsWithArticles.length > 0 && <div style={{ marginTop: "14px" }}><button style={st.btnPrimary} onClick={() => setStep(3)}>Continue to review ({totalArticles} total)</button></div>}
@@ -480,13 +598,13 @@ function App() {
 
       {step >= 3 && totalArticles > 0 && (
         <div style={st.card}>
-          <p style={st.stepTitle}>Step 3 — Review before analysis</p>
+          <p style={st.stepTitle}>Step 3 - Review before analysis</p>
           <p style={st.stepDesc}>{totalArticles} articles across {segmentsWithArticles.length} segment(s). Each article requires one analysis request.</p>
           <div style={{ maxHeight: "260px", overflowY: "auto", border: `1px solid ${C.hairline}`, borderRadius: "8px" }}>
             {segmentsWithArticles.map((seg) => (
               <div key={seg}>
                 <div style={{ background: C.cream, padding: "8px 14px", fontSize: "13px", fontWeight: 700 }}>{seg} ({segmentArticles[seg].length})</div>
-                {segmentArticles[seg].map((a) => <div key={a.id} style={{ padding: "8px 14px", fontSize: "13px", borderBottom: `1px solid ${C.hairline}` }}>{a.headline} <span style={st.caption}>— {a.byline || "No byline"} · {formatDate(a.publish_date)}</span></div>)}
+                {segmentArticles[seg].map((a) => <div key={a.id} style={{ padding: "8px 14px", fontSize: "13px", borderBottom: `1px solid ${C.hairline}` }}>{a.headline} <span style={st.caption}>- {a.byline || "No byline"} - {formatDate(a.publish_date)}</span></div>)}
               </div>
             ))}
           </div>
@@ -495,13 +613,14 @@ function App() {
             <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={analysisMode === "fe"} onChange={() => setAnalysisMode("fe")} /> FE YMYL/E-E-A-T Guidelines</label>
             <label style={{ fontSize: "13px" }}><input type="radio" checked={analysisMode === "hcs"} onChange={() => setAnalysisMode("hcs")} /> Google HCS / Spam Audit</label>
           </div>
-          <button style={st.btnPrimary} onClick={analyzeAll} disabled={analyzing}>{analyzing ? "Analysing…" : `Analyse all ${totalArticles} articles`}</button>
+          <p style={st.caption}>Estimated analysis size: about {(totalArticles * ESTIMATED_TOKENS_PER_ARTICLE).toLocaleString()} Claude tokens before retries. Server caps and rate limits still apply.</p>
+          <button style={st.btnPrimary} onClick={analyzeAll} disabled={analyzing}>{analyzing ? "Analysing..." : `Analyse all ${totalArticles} articles`}</button>
         </div>
       )}
 
       {step >= 4 && (
         <div style={st.card}>
-          <p style={st.stepTitle}>Step 4 — Content risks by segment</p>
+          <p style={st.stepTitle}>Step 4 - Content risks by segment</p>
           {analyzing && <p style={{ fontSize: "14px", color: C.inkMute }}>{progress}</p>}
           {segmentSummary.length > 0 && (
             <div style={{ marginBottom: "16px" }}>
@@ -509,7 +628,7 @@ function App() {
                 <div key={sm.seg} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: C.cream, borderRadius: "8px", marginBottom: "6px", fontSize: "13px" }}>
                   <span style={{ fontWeight: 700 }}>{sm.seg}</span>
                   <span style={st.caption}>{sm.analyzed}/{sm.total} analysed</span>
-                  <span>{sm.red > 0 && <span style={{ color: C.error, fontWeight: 700, marginRight: "10px" }}>● {sm.red} red</span>}{sm.yellow > 0 && <span style={{ color: C.warn, fontWeight: 700 }}>● {sm.yellow} yellow</span>}{sm.analyzed > 0 && sm.red === 0 && sm.yellow === 0 && <span style={{ color: C.success }}>✓ Clear</span>}</span>
+                  <span>{sm.red > 0 && <span style={{ color: C.error, fontWeight: 700, marginRight: "10px" }}>{sm.red} red</span>}{sm.yellow > 0 && <span style={{ color: C.warn, fontWeight: 700 }}>{sm.yellow} yellow</span>}{sm.analyzed > 0 && sm.red === 0 && sm.yellow === 0 && <span style={{ color: C.success }}>Clear</span>}</span>
                 </div>
               ))}
             </div>
@@ -532,11 +651,12 @@ function App() {
                       <p style={{ fontWeight: 700, fontSize: "14px", margin: 0 }}>{a?.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: C.linkBlue }}>{a.headline}</a> : a?.headline}</p>
                       <span style={{ fontSize: "12px", padding: "3px 12px", borderRadius: "90px", background: isBad ? C.errorTint : isMid ? C.warnTint : C.successTint, color: isBad ? C.error : isMid ? C.warn : C.success, fontWeight: 700, whiteSpace: "nowrap" }}>{badgeLabel}</span>
                     </div>
-                    <p style={{ ...st.caption, margin: "4px 0 10px" }}>{a?.segment} · {a?.byline || "No byline"} · {formatDate(a?.publish_date)}</p>
-                    {r.spam_risk && r.spam_risk !== "none" && <p style={{ fontSize: "12px", color: C.error, fontWeight: 700, margin: "0 0 8px" }}>⚠ Spam risk: {r.spam_risk}</p>}
+                    <p style={{ ...st.caption, margin: "4px 0 10px" }}>{a?.segment} - {a?.byline || "No byline"} - {formatDate(a?.publish_date)}</p>
+                    {r._usage && <p style={st.caption}>Claude usage: {r._usage.input_tokens || 0} input tokens, {r._usage.output_tokens || 0} output tokens.</p>}
+                    {r.spam_risk && r.spam_risk !== "none" && <p style={{ fontSize: "12px", color: C.error, fontWeight: 700, margin: "0 0 8px" }}>Spam risk: {r.spam_risk}</p>}
                     {r.findings?.map((f, i) => (
                       <div key={i} style={{ fontSize: "13px", marginBottom: "8px", paddingLeft: "10px", borderLeft: `3px solid ${f.severity === "red" ? C.error : C.warn}` }}>
-                        <strong>● {f.issue_name}</strong><br /><strong>Evidence:</strong> {f.evidence}<br />{f.what_is_wrong}<br /><span style={{ color: C.inkMute }}>{f.why_it_hurts}</span><br /><strong>How to improve:</strong><ol style={{ margin: "6px 0 4px", paddingLeft: "20px" }}>{(f.optimization_steps || [f.fix]).map((step, stepIndex) => <li key={stepIndex}>{step}</li>)}</ol>{f.expected_improvement && <span style={{ color: C.inkMute }}><strong>Expected improvement:</strong> {f.expected_improvement}</span>}
+                        <strong>{f.issue_name}</strong><br /><strong>Evidence:</strong> {f.evidence}<br />{f.what_is_wrong}<br /><span style={{ color: C.inkMute }}>{f.why_it_hurts}</span><br /><strong>How to improve:</strong><ol style={{ margin: "6px 0 4px", paddingLeft: "20px" }}>{(f.optimization_steps || [f.fix]).map((step, stepIndex) => <li key={stepIndex}>{step}</li>)}</ol>{f.expected_improvement && <span style={{ color: C.inkMute }}><strong>Expected improvement:</strong> {f.expected_improvement}</span>}
                       </div>
                     ))}
                     {r.bottom_line && <p style={{ fontSize: "13px", fontStyle: "italic", marginTop: "8px" }}>{r.bottom_line}</p>}

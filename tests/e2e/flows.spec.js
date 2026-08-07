@@ -31,22 +31,32 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   await page.route("**/wp-json/wp/v2/coauthors?**", async (route) => {
     await route.fulfill({ json: [{ id: 407, name: "fe-desk", slug: "cap-fe-desk" }] });
   });
+  await page.route("**/wp-json/wp/v2/categories?**", async (route) => {
+    await route.fulfill({
+      headers: { "X-WP-Total": "1", "X-WP-TotalPages": "1" },
+      json: [{ id: 5, slug: "markets", count: 10 }],
+    });
+  });
+  await page.route("**/wp-json/wp/v2/posts?**", async (route) => {
+    await route.fulfill({
+      headers: { "X-WP-Total": "1", "X-WP-TotalPages": "1" },
+      json: [articlePayload],
+    });
+  });
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "FE Content Audit" })).toBeVisible();
   await page.getByPlaceholder("Password").fill("team-password");
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByText("Step 1 — Load segments")).toBeVisible();
+  await expect(page.getByText("Step 1 - Load segments")).toBeVisible();
 
-  await page.getByPlaceholder("Paste the complete segment JSON here").fill(JSON.stringify([{ id: 5, slug: "markets" }]));
-  await page.getByRole("button", { name: "Load segments" }).click();
-  await expect(page.getByText("✓ 1 segments loaded.")).toBeVisible();
+  await page.getByRole("button", { name: "Load all segments" }).click();
+  await expect(page.getByText("Loaded 1 active segments.")).toBeVisible();
   await expect(page.getByLabel("Publication month")).toHaveValue("last-12-months");
   expect(await page.getByLabel("Publication month").locator("option").count()).toBeGreaterThanOrEqual(13);
   await expect(page.getByRole("link", { name: /Open the FE article page/ })).toHaveAttribute("href", /wp-json\/wp\/v2\/posts\?categories=5.*after=.*before=/);
 
-  await page.getByPlaceholder("Paste the complete article JSON here").fill(JSON.stringify([articlePayload]));
-  await page.getByRole("button", { name: /Add these articles/ }).click();
+  await page.getByRole("button", { name: "Load next page" }).click();
   await page.getByRole("button", { name: /Continue to review/ }).click();
   await expect(page.getByText("Market update")).toBeVisible();
   await expect(page.getByText(/FE Desk/)).toBeVisible();
@@ -56,7 +66,7 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   await expect(page.getByText("Ask a qualified expert to explain it.")).toBeVisible();
 
   await page.getByRole("button", { name: "Save analysis" }).click();
-  await expect(page.getByText("✓ Saved 1 articles in this browser.")).toBeVisible();
+  await expect(page.getByText("Saved 1 articles in this browser.")).toBeVisible();
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export CSV" }).last().click();
   const download = await downloadPromise;
@@ -75,7 +85,7 @@ test("the authentication and audit workflow remain usable on mobile", async ({ p
     sessionStorage.setItem("fe_session_expires", String(Date.now() + 60_000));
   });
   await page.reload();
-  await expect(page.getByText("Step 1 — Load segments")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Load segments" })).toBeInViewport();
+  await expect(page.getByText("Step 1 - Load segments")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Load all segments" })).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });

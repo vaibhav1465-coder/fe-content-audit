@@ -53,15 +53,27 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
 
 const DAILY_BUDGET_CAP = Number(process.env.DAILY_REQUEST_CAP || 500);
 const PER_MINUTE_LIMIT = Number(process.env.PER_MINUTE_LIMIT_PER_IP || 15);
+const MAX_BODY_TEXT_CHARS = Number(process.env.MAX_BODY_TEXT_CHARS || 8000);
+const MAX_ARTICLE_PAYLOAD_CHARS = Number(process.env.MAX_ARTICLE_PAYLOAD_CHARS || 12000);
 
 function buildUserPrompt(article) {
   const headline = String(article.headline || "(missing)").slice(0, 500);
   const subheading = String(article.subheading || "(missing)").slice(0, 500);
-  const byline = String(article.byline || "(unavailable from source API — do not treat this as evidence that the article has no byline)").slice(0, 200);
+  const byline = String(article.byline || "(unavailable from source API - do not treat this as evidence that the article has no byline)").slice(0, 200);
   const publishDate = String(article.publish_date || "(missing)").slice(0, 100);
   const segment = String(article.segment || "(missing)").slice(0, 100);
-  const bodyText = String(article.body_text || "").slice(0, 8000);
+  const bodyText = String(article.body_text || "").slice(0, MAX_BODY_TEXT_CHARS);
   return `Headline: ${headline}\nSubheading: ${subheading}\nByline: ${byline}\nPublish date: ${publishDate}\nSegment: ${segment}\nBody text: ${bodyText}`;
+}
+
+function validateArticleInput(article) {
+  if (!article || typeof article !== "object") return "Missing or invalid 'article' in request body.";
+  const headline = String(article.headline || "").trim();
+  const bodyText = String(article.body_text || "").trim();
+  if (!headline) return "Article headline is required.";
+  if (bodyText.length < 80) return "Article body is too short to analyse safely.";
+  if (JSON.stringify(article).length > MAX_ARTICLE_PAYLOAD_CHARS) return "Article payload is too large.";
+  return "";
 }
 
 function normalizeEvidence(value) {
@@ -115,6 +127,14 @@ export default async function handler(req, res) {
   const authResult = verifyToken(req.headers.authorization);
   if (!authResult.valid) return res.status(401).json({ error: authResult.reason });
 
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: "Server misconfigured: ANTHROPIC_API_KEY not set." });
+
+  const article = req.body?.article;
+  const mode = req.body?.mode === "hcs" ? "hcs" : "fe";
+  const articleError = validateArticleInput(article);
+  if (articleError) return res.status(400).json({ error: articleError });
+
   if (!supabase) {
     return res.status(500).json({ error: "Rate limiting not configured (missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY). Refusing to process requests until this is set up." });
   }
@@ -128,13 +148,6 @@ export default async function handler(req, res) {
   const { data: withinDailyCap, error: dailyCapError } = await supabase.rpc("check_and_increment_daily_cap", { p_cap: DAILY_BUDGET_CAP });
   if (dailyCapError) return res.status(500).json({ error: "Daily cap check failed", detail: dailyCapError.message });
   if (!withinDailyCap) return res.status(429).json({ error: `Daily request cap reached (${DAILY_BUDGET_CAP}/day). Resets at midnight UTC.` });
-
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: "Server misconfigured: ANTHROPIC_API_KEY not set." });
-
-  const article = req.body?.article;
-  const mode = req.body?.mode === "hcs" ? "hcs" : "fe";
-  if (!article || typeof article !== "object") return res.status(400).json({ error: "Missing or invalid 'article' in request body." });
 
   const systemPrompt = mode === "hcs" ? SYSTEM_PROMPT_HCS : SYSTEM_PROMPT_FE;
 
@@ -169,6 +182,7 @@ export default async function handler(req, res) {
         if (!validateAnalysisResult(repaired, article)) {
           return res.status(502).json({ error: "The analysis response was incomplete or not grounded in the article. Please retry." });
         }
+        repaired._usage = data.usage || null;
         return res.status(200).json(repaired);
       }
       return res.status(502).json({ error: "Could not parse model output as JSON", raw: cleaned.slice(0, 500) });
@@ -178,6 +192,7 @@ export default async function handler(req, res) {
       return res.status(502).json({ error: "The analysis response was incomplete or not grounded in the article. Please retry." });
     }
 
+    parsed._usage = data.usage || null;
     return res.status(200).json(parsed);
   } catch (e) {
     return res.status(500).json({ error: "Internal error", detail: String(e).slice(0, 500) });

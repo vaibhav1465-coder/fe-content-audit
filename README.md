@@ -1,19 +1,19 @@
-# FE Content Audit — Deployment Guide
+# FE Content Audit - Deployment Guide
 
 ## Project contents
 
-- `index.html` — the password-protected interface
-- `build.js` — compiles the interface JSX for production
-- `api/auth.js` — authenticates users and issues session tokens
-- `api/analyze.js` — runs authenticated, Supabase-rate-limited analyses
-- `api/_verifyToken.js` — verifies session tokens
-- `supabase_setup.sql` — creates the Supabase rate-limit tables
+- `index.html` - the password-protected interface
+- `build.js` - compiles the interface JSX for production
+- `api/auth.js` - authenticates users and issues session tokens
+- `api/analyze.js` - runs authenticated, Supabase-rate-limited analyses
+- `api/_verifyToken.js` - verifies session tokens
+- `supabase_setup.sql` - creates the Supabase rate-limit tables
 
 ## 1. Configure Supabase
 
 1. Create a Supabase project and wait for it to be provisioned.
-2. Open **SQL Editor → New Query**, paste the contents of `supabase_setup.sql`, and select **Run**.
-3. Open **Settings → API** and copy the **Project URL** and **service_role key** (not the anon key).
+2. Open **SQL Editor > New Query**, paste the contents of `supabase_setup.sql`, and select **Run**.
+3. Open **Settings > API** and copy the **Project URL** and **service_role key**. Do not use the anon key for server-side rate limiting.
 
 ## 2. Generate secrets
 
@@ -34,7 +34,7 @@ git branch -M main
 git push -u origin main
 ```
 
-Check `git status` before committing — `.env` must never appear in the list.
+Check `git status` before committing - `.env` must never appear in the list.
 
 ## 4. Deploy to Vercel
 
@@ -50,6 +50,8 @@ Check `git status` before committing — `.env` must never appear in the list.
 | `SUPABASE_SERVICE_ROLE_KEY` | Service-role key | Supabase |
 | `PER_MINUTE_LIMIT_PER_IP` | `15` | Default |
 | `DAILY_REQUEST_CAP` | `500` | Adjust to expected usage |
+| `MAX_BODY_TEXT_CHARS` | `8000` | Default |
+| `MAX_ARTICLE_PAYLOAD_CHARS` | `12000` | Default |
 | `ALLOWED_ORIGIN` | `*` for the first deployment | Step 5 |
 
 ## 5. Restrict CORS
@@ -62,11 +64,12 @@ Open the production URL, sign in with `APP_PASSWORD`, load segments, and run one
 
 ## Usage controls
 
-Set a monthly spending limit in the Anthropic Console as an independent safety control.
+Use a separate Anthropic API key for this product when possible. That keeps billing, usage alerts, and key rotation separate from other tools. Also set a monthly spending limit in the Anthropic Console as an independent safety control.
 
 ## Notes
 
-- Saved analyses use browser `localStorage` — storage is per browser, not shared across devices or team members.
+- Saved analyses use browser `localStorage` - storage is per browser, not shared across devices or team members.
 - The article picker defaults to the last 12 months and also offers each elapsed month in the current and previous calendar year.
-- The frontend fetches FE article data directly from the browser using category IDs and exact date boundaries. A segment that fails on its first page is marked unavailable through the FE API. A later failure is treated as the end of the available article range.
+- The frontend fetches all active FE categories across WordPress pagination, then loads article pages directly using category IDs and exact date boundaries.
+- Large article loads are paginated, and analysis runs are paced below the configured per-minute rate limit.
 - Recommendations are displayed only when each finding contains evidence found in the submitted article and one to three concrete optimisation steps.
