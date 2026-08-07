@@ -66,10 +66,13 @@ Open the production URL, sign in with `APP_PASSWORD`, load segments, and run one
 
 Use a separate Anthropic API key for this product when possible. That keeps billing, usage alerts, and key rotation separate from other tools. Also set a monthly spending limit in the Anthropic Console as an independent safety control.
 
+For large segment work, start with **Source-only pre-audit**. It uses the loaded FE article data and does not call Claude. Use Claude modes only for high-risk pages, samples, or pages selected for deeper editorial review.
+
 ## Notes
 
 - Saved analyses use browser `localStorage` - storage is per browser, not shared across devices or team members.
 - The article picker defaults to the last 12 months and also offers each elapsed month in the current and previous calendar year.
 - The frontend fetches all active FE categories across WordPress pagination, then loads article pages directly using category IDs and exact date boundaries.
-- Large article loads are paginated, and analysis runs are paced below the configured per-minute rate limit.
+- FE WordPress caps each article API page at 100 records. Use **Load all available pages** to collect larger batches in controlled chunks.
+- Large Claude analysis runs are paced below the configured per-minute rate limit.
 - Recommendations are displayed only when each finding contains evidence found in the submitted article and one to three concrete optimisation steps.

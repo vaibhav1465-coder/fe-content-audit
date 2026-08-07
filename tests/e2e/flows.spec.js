@@ -48,7 +48,7 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   await expect(page.getByRole("heading", { name: "FE Content Audit" })).toBeVisible();
   await page.getByPlaceholder("Password").fill("team-password");
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByText("Step 1 - Load segments")).toBeVisible();
+  await expect(page.getByText("Load segments", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Load all segments" }).click();
   await expect(page.getByText("Loaded 1 active segments.")).toBeVisible();
@@ -60,6 +60,7 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   await page.getByRole("button", { name: /Continue to review/ }).click();
   await expect(page.getByText("Market update")).toBeVisible();
   await expect(page.getByText(/FE Desk/)).toBeVisible();
+  await page.getByLabel("Claude: FE YMYL/E-E-A-T Guidelines").check();
   await page.getByRole("button", { name: "Analyse all 1 articles" }).click();
   await expect(page.getByText("Add expert sourcing.")).toBeVisible();
   await expect(page.getByText("Evidence:")).toBeVisible();
@@ -75,6 +76,44 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   expect(analysisCalls).toBe(1);
 });
 
+test("source-only pre-audit runs without calling Claude", async ({ page }) => {
+  let analysisCalls = 0;
+  await page.route("**/api/auth", async (route) => {
+    await route.fulfill({ json: { token: "test-token", expiresAt: Date.now() + 60_000 } });
+  });
+  await page.route("**/api/analyze", async (route) => {
+    analysisCalls += 1;
+    await route.fulfill({ status: 500, json: { error: "Claude should not be called" } });
+  });
+  await page.route("**/wp-json/wp/v2/coauthors?**", async (route) => {
+    await route.fulfill({ json: [{ id: 407, name: "fe-desk", slug: "cap-fe-desk" }] });
+  });
+  await page.route("**/wp-json/wp/v2/categories?**", async (route) => {
+    await route.fulfill({
+      headers: { "X-WP-Total": "1", "X-WP-TotalPages": "1" },
+      json: [{ id: 5, slug: "markets", count: 10 }],
+    });
+  });
+  await page.route("**/wp-json/wp/v2/posts?**", async (route) => {
+    await route.fulfill({
+      headers: { "X-WP-Total": "1", "X-WP-TotalPages": "1" },
+      json: [articlePayload],
+    });
+  });
+
+  await page.goto("/");
+  await page.getByPlaceholder("Password").fill("team-password");
+  await page.getByRole("button", { name: "Log in" }).click();
+  await page.getByRole("button", { name: "Load all segments" }).click();
+  await page.getByRole("button", { name: "Load next page" }).click();
+  await page.getByRole("button", { name: /Continue to review/ }).click();
+  await expect(page.getByLabel("Source-only pre-audit (no Claude cost)")).toBeChecked();
+  await expect(page.getByText("This mode does not call Claude.")).toBeVisible();
+  await page.getByRole("button", { name: "Analyse all 1 articles" }).click();
+  await expect(page.getByText("Source-only pre-audit. No Claude tokens used.")).toBeVisible();
+  expect(analysisCalls).toBe(0);
+});
+
 test("the authentication and audit workflow remain usable on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
@@ -85,7 +124,7 @@ test("the authentication and audit workflow remain usable on mobile", async ({ p
     sessionStorage.setItem("fe_session_expires", String(Date.now() + 60_000));
   });
   await page.reload();
-  await expect(page.getByText("Step 1 - Load segments")).toBeVisible();
+  await expect(page.getByText("Load segments", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Load all segments" })).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });

@@ -10,20 +10,30 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; background: #f4ede4; font-family: 'Inter', system-ui, sans-serif; color: #1d1d1d; }
-  #root { max-width: 800px; margin: 0 auto; padding: 32px 20px 80px; }
-  .login-wrap { max-width: 380px; margin: 100px auto; text-align: center; }
+  body { margin: 0; background: #f6f3ef; font-family: 'Inter', system-ui, sans-serif; color: #1d1d1d; }
+  #root { max-width: 980px; margin: 0 auto; padding: 32px 20px 80px; }
+  .login-shell { min-height: 100vh; display: grid; place-items: center; padding: 28px 16px; }
+  .login-wrap { width: 100%; max-width: 430px; background: #ffffff; border: 1px solid #e7e1dc; border-radius: 14px; padding: 32px; box-shadow: 0 18px 48px rgba(29, 29, 29, 0.08); }
+  .login-kicker { margin: 0 0 10px; color: #6b5c67; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  .dashboard-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 18px 0 16px; }
+  .metric-card { background: #ffffff; border: 1px solid #e7e1dc; border-radius: 10px; padding: 14px 16px; }
+  .metric-label { margin: 0 0 6px; color: #696969; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+  .metric-value { margin: 0; color: #1d1d1d; font-size: 24px; line-height: 1.15; font-weight: 700; }
+  .toolbar-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .step-label { margin: 0 0 8px; color: #4a154b; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
   input[type=text], input[type=number], input[type=password], textarea {
-    border: 1px solid #e6e6e6; border-radius: 4px; padding: 10px 12px; font-family: inherit; font-size: 14px; color: #1d1d1d;
+    border: 1px solid #ded8d3; border-radius: 8px; padding: 11px 12px; font-family: inherit; font-size: 14px; color: #1d1d1d; background: #ffffff;
   }
-  select { border: 1px solid #e6e6e6; border-radius: 4px; padding: 10px 12px; font-family: inherit; font-size: 14px; color: #1d1d1d; background: #ffffff; }
+  input:focus, textarea:focus, select:focus { outline: 2px solid rgba(74, 21, 75, 0.16); border-color: #4a154b; }
+  select { border: 1px solid #ded8d3; border-radius: 8px; padding: 11px 12px; font-family: inherit; font-size: 14px; color: #1d1d1d; background: #ffffff; }
   textarea { width: 100%; font-family: monospace; font-size: 12px; }
   button { font-family: inherit; }
   .page-header, .saved-row, .result-header { display: flex; justify-content: space-between; }
   .saved-actions { display: flex; gap: 6px; }
   @media (max-width: 640px) {
     #root { padding: 20px 12px 48px; }
-    .login-wrap { margin: 56px auto; }
+    .login-wrap { padding: 24px; }
+    .dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .page-header, .saved-row, .result-header { flex-direction: column; align-items: stretch !important; gap: 12px; }
     .saved-actions { flex-wrap: wrap; }
     .saved-actions button { flex: 1; }
@@ -46,17 +56,17 @@ const C = {
 const st = {
   h1: { fontSize: "32px", fontWeight: 700, color: C.primary, margin: "0 0 4px" },
   subtitle: { fontSize: "16px", color: C.inkMute, margin: "0 0 20px", lineHeight: 1.55 },
-  card: { background: C.canvas, border: `1px solid ${C.hairline}`, borderRadius: "16px", padding: "24px", marginBottom: "16px" },
-  cardLavender: { background: C.lavender, border: `1px solid ${C.hairline}`, borderRadius: "16px", padding: "24px", marginBottom: "16px" },
-  stepTitle: { fontSize: "22px", fontWeight: 600, margin: "0 0 4px" },
+  card: { background: C.canvas, border: "1px solid #e7e1dc", borderRadius: "12px", padding: "24px", marginBottom: "16px", boxShadow: "0 8px 26px rgba(29, 29, 29, 0.035)" },
+  cardLavender: { background: "#fbf7fd", border: "1px solid #eadff0", borderRadius: "12px", padding: "24px", marginBottom: "16px" },
+  stepTitle: { fontSize: "21px", fontWeight: 700, margin: "0 0 4px" },
   stepDesc: { fontSize: "14px", color: C.inkMute, margin: "0 0 14px", lineHeight: 1.5 },
-  btnPrimary: { background: C.primary, color: C.onPrimary, border: "none", borderRadius: "90px", padding: "14px 28px", fontSize: "16px", fontWeight: 700, cursor: "pointer" },
-  btnOutline: { background: C.canvas, color: C.primary, border: `2px solid ${C.primary}`, borderRadius: "90px", padding: "9px 20px", fontSize: "14px", fontWeight: 700, cursor: "pointer" },
-  btnOutlineError: { background: C.canvas, color: C.error, border: `2px solid ${C.error}`, borderRadius: "90px", padding: "9px 20px", fontSize: "14px", fontWeight: 700, cursor: "pointer" },
+  btnPrimary: { background: C.primary, color: C.onPrimary, border: "none", borderRadius: "10px", padding: "13px 24px", fontSize: "15px", fontWeight: 700, cursor: "pointer" },
+  btnOutline: { background: C.canvas, color: C.primary, border: `1px solid ${C.primary}`, borderRadius: "10px", padding: "10px 18px", fontSize: "14px", fontWeight: 700, cursor: "pointer" },
+  btnOutlineError: { background: C.canvas, color: C.error, border: `1px solid ${C.error}`, borderRadius: "10px", padding: "10px 18px", fontSize: "14px", fontWeight: 700, cursor: "pointer" },
   link: { color: C.linkBlue, textDecoration: "underline", fontSize: "13px", fontFamily: "monospace", wordBreak: "break-all", display: "block" },
-  pillTag: { fontSize: "12px", fontWeight: 700, padding: "6px 16px", borderRadius: "90px", background: C.lavender, color: C.primary, border: "none", cursor: "pointer" },
-  pillTagActive: { fontSize: "12px", fontWeight: 700, padding: "6px 16px", borderRadius: "90px", background: C.primary, color: C.onPrimary, border: "none", cursor: "pointer" },
-  pillTagBad: { fontSize: "12px", fontWeight: 700, padding: "6px 16px", borderRadius: "90px", background: C.errorTint, color: C.error, border: "none", cursor: "pointer" },
+  pillTag: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "10px", background: C.lavender, color: C.primary, border: "1px solid transparent", cursor: "pointer" },
+  pillTagActive: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "10px", background: C.primary, color: C.onPrimary, border: "1px solid transparent", cursor: "pointer" },
+  pillTagBad: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "10px", background: C.errorTint, color: C.error, border: "1px solid transparent", cursor: "pointer" },
   caption: { fontSize: "12px", color: C.inkMute },
 };
 
@@ -70,6 +80,7 @@ const MAX_AUTO_PAGES_PER_SEGMENT = 20;
 const MAX_ANALYSIS_ARTICLES = 500;
 const BODY_TEXT_LIMIT = 8000;
 const ESTIMATED_TOKENS_PER_ARTICLE = 2600;
+const SOURCE_AUDIT_LIMIT = 5000;
 
 function getStoredSession() {
   const token = sessionStorage.getItem(SESSION_KEY);
@@ -243,6 +254,103 @@ function normalizeArticles(raw, segment) {
   return [];
 }
 
+function textContainsAny(text, patterns) {
+  const normalized = String(text || "").toLowerCase();
+  return patterns.some((pattern) => normalized.includes(pattern));
+}
+
+function countMatches(text, regex) {
+  return (String(text || "").match(regex) || []).length;
+}
+
+function buildSourceOnlyResult(article) {
+  const bodyText = String(article.body_text || "").slice(0, BODY_TEXT_LIMIT);
+  const bodyLower = bodyText.toLowerCase();
+  const wordCount = bodyText.trim() ? bodyText.trim().split(/\s+/).length : 0;
+  const hasByline = Boolean(String(article.byline || "").trim());
+  const sourceSignals = countMatches(bodyText, /https?:\/\/|according to|said|told|data|report|survey|filing|statement|exchange|ministry|rbi|sebi|nse|bse/gi);
+  const expertSignals = countMatches(bodyText, /said|told|according to|analyst|expert|economist|official|spokesperson|ceo|cfo|md|founder|research head/gi);
+  const headings = countMatches(bodyText, /\n[A-Z][^\n]{10,90}\n/g);
+  const findings = [];
+
+  if (!hasByline) {
+    findings.push({
+      severity: "yellow",
+      issue_name: "Byline unavailable",
+      evidence: article.headline || "Article headline",
+      what_is_wrong: "The source data does not provide a clear byline for this article.",
+      why_it_hurts: "Readers and editors have less context about accountability and expertise.",
+      fix: "Confirm the author/byline in the CMS and add a named byline where appropriate.",
+      optimization_steps: ["Check the CMS author field.", "Add or correct the visible byline.", "Link to an author profile when available."],
+      expected_improvement: "A clear byline improves transparency and editorial trust.",
+    });
+  }
+
+  if (wordCount < 300) {
+    findings.push({
+      severity: "red",
+      issue_name: "Thin article body",
+      evidence: bodyText.slice(0, 90) || article.headline || "Article body",
+      what_is_wrong: `The article has about ${wordCount} words, which may not give readers enough useful context.`,
+      why_it_hurts: "Thin pages often fail to answer follow-up reader questions.",
+      fix: "Expand the article with concrete context, data, and next-step explanation.",
+      optimization_steps: ["Add the key background in simple language.", "Explain why the update matters now.", "Add one useful data point or source."],
+      expected_improvement: "More complete context can make the page more useful for readers.",
+    });
+  }
+
+  if (sourceSignals < 2) {
+    findings.push({
+      severity: "yellow",
+      issue_name: "Weak sourcing signals",
+      evidence: bodyText.slice(0, 90) || article.headline || "Article body",
+      what_is_wrong: "The article has limited visible source, data, or attribution signals.",
+      why_it_hurts: "YMYL and business content needs clear support for important claims.",
+      fix: "Add named sources, official data, or document links for the main claims.",
+      optimization_steps: ["Identify the main factual claim.", "Add the primary source or official data point.", "Attribute important claims to named people or institutions."],
+      expected_improvement: "Better sourcing makes the article easier to trust and verify.",
+    });
+  }
+
+  if (expertSignals < 1 && textContainsAny(bodyLower, ["tax", "loan", "investment", "insurance", "health", "stock", "market", "policy", "rbi", "sebi"])) {
+    findings.push({
+      severity: "yellow",
+      issue_name: "No expert context detected",
+      evidence: article.headline || bodyText.slice(0, 90) || "Article headline",
+      what_is_wrong: "The article appears to cover a high-impact topic without clear expert explanation.",
+      why_it_hurts: "Readers may need qualified context before acting on the information.",
+      fix: "Add a short expert quote or editor explanation that clarifies what readers should take away.",
+      optimization_steps: ["Ask a qualified expert for one practical quote.", "Explain the reader impact in plain language.", "Avoid direct advice unless it is properly qualified."],
+      expected_improvement: "Expert context can make the article safer and more helpful.",
+    });
+  }
+
+  if (headings < 1 && wordCount > 600) {
+    findings.push({
+      severity: "yellow",
+      issue_name: "Needs clearer structure",
+      evidence: bodyText.slice(0, 90) || article.headline || "Article body",
+      what_is_wrong: "The article is long enough to benefit from clearer sectioning.",
+      why_it_hurts: "Readers may miss the main points when the page is hard to scan.",
+      fix: "Add short, descriptive subheadings around the main reader questions.",
+      optimization_steps: ["Group related paragraphs together.", "Add one subheading for context.", "Add one subheading for reader impact or next steps."],
+      expected_improvement: "Clearer structure helps readers scan and understand the content faster.",
+    });
+  }
+
+  const finalFindings = findings.slice(0, 2);
+  return {
+    overall_health: finalFindings.some((f) => f.severity === "red") ? "Weak" : finalFindings.length ? "Needs Work" : "Strong",
+    findings: finalFindings,
+    bottom_line: finalFindings.length ? "Prioritise the listed source-data fixes before deeper editorial review." : "No obvious source-data issue was detected in the article fields.",
+    source_audit: true,
+    word_count: wordCount,
+    source_signals: sourceSignals,
+    expert_signals: expertSignals,
+    _usage: { input_tokens: 0, output_tokens: 0 },
+  };
+}
+
 function downloadCsv(rows, filename) {
   const esc = (v) => { const s = String(v ?? ""); return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s; };
   const header = ["segment", "headline", "url", "byline", "publish_date", "verdict", "top_finding", "evidence", "why_it_hurts", "fix", "optimization_steps", "expected_improvement", "ymyl_score", "experience", "expertise", "authoritativeness", "trustworthiness", "information_gain_score", "spam_risk"];
@@ -270,14 +378,18 @@ function LoginScreen({ onSuccess }) {
   }
 
   return (
+    <div className="login-shell">
     <div className="login-wrap">
-      <h1 style={st.h1}>FE Content Audit</h1>
-      <p style={st.subtitle}>Enter the team password to continue.</p>
+      <p className="login-kicker">Internal content operations</p>
+      <h1 style={{ ...st.h1, marginBottom: "8px" }}>FE Content Audit</h1>
+      <p style={{ ...st.subtitle, marginBottom: "24px" }}>Sign in to load FE segments, run scalable pre-audits, and review pages selected for deeper analysis.</p>
       <form onSubmit={handleSubmit}>
+        <label style={{ display: "block", textAlign: "left", fontSize: "13px", fontWeight: 700, marginBottom: "8px" }}>Team password</label>
         <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus style={{ width: "100%", marginBottom: "12px" }} />
         <button style={{ ...st.btnPrimary, width: "100%" }} type="submit" disabled={loading}>{loading ? "Checking..." : "Log in"}</button>
       </form>
       {error && <p style={{ color: C.error, fontSize: "13px", marginTop: "10px" }}>{error}</p>}
+    </div>
     </div>
   );
 }
@@ -298,7 +410,7 @@ function App() {
   const [progress, setProgress] = useState("");
   const [articlesPerPage, setArticlesPerPage] = useState(50);
   const [segmentOffsets, setSegmentOffsets] = useState({});
-  const [analysisMode, setAnalysisMode] = useState("fe");
+  const [analysisMode, setAnalysisMode] = useState("source");
   const [segmentStatus, setSegmentStatus] = useState({});
   const [segmentSearch, setSegmentSearch] = useState("");
   const [savedAnalyses, setSavedAnalyses] = useState(getSavedAnalyses());
@@ -437,6 +549,21 @@ function App() {
 
   async function analyzeAll() {
     const allArticles = Object.values(segmentArticles).flat();
+    if (analysisMode === "source") {
+      if (allArticles.length > SOURCE_AUDIT_LIMIT) {
+        setLoadMsg(`This source-only run has ${allArticles.length} articles. Reduce it to ${SOURCE_AUDIT_LIMIT} or fewer for browser reliability.`);
+        return;
+      }
+      setAnalyzing(true); setStep(4);
+      const sourceResults = {};
+      allArticles.forEach((article, index) => {
+        sourceResults[article.id] = buildSourceOnlyResult(article);
+        if ((index + 1) % 100 === 0) setProgress(`Pre-audited ${index + 1} of ${allArticles.length}...`);
+      });
+      setResults(sourceResults);
+      setProgress(""); setAnalyzing(false);
+      return;
+    }
     if (allArticles.length > MAX_ANALYSIS_ARTICLES) {
       setLoadMsg(`This run has ${allArticles.length} articles. Reduce it to ${MAX_ANALYSIS_ARTICLES} or fewer before analysing.`);
       return;
@@ -487,6 +614,8 @@ function App() {
         ymyl_score: r.ymyl_score ?? "", experience: r.experience ?? r.experience_score ?? "", expertise: r.expertise ?? "",
         authoritativeness: r.authoritativeness ?? "", trustworthiness: r.trustworthiness ?? r.trust_score ?? "",
         information_gain_score: r.information_gain_score ?? "", spam_risk: r.spam_risk ?? "",
+        word_count: r.word_count ?? "", source_signals: r.source_signals ?? "", expert_signals: r.expert_signals ?? "",
+        input_tokens: r._usage?.input_tokens ?? "", output_tokens: r._usage?.output_tokens ?? "",
       };
     });
   }
@@ -506,6 +635,8 @@ function App() {
   function deleteSaved(timestamp) { deleteSavedAnalysis(timestamp); setSavedAnalyses(getSavedAnalyses()); }
 
   const resultEntries = Object.entries(results);
+  const failedCount = Object.values(results).filter((r) => r._failed).length;
+  const sourceOnlyCount = Object.values(results).filter((r) => r.source_audit).length;
   const segmentSummary = segmentsWithArticles.map((seg) => {
     const arts = segmentArticles[seg] || [];
     const segResults = arts.map((a) => results[a.id]).filter(Boolean);
@@ -519,11 +650,30 @@ function App() {
   return (
     <div>
       <div className="page-header">
-        <div><h1 style={st.h1}>FE Content Audit</h1><p style={st.subtitle}>Load segments and articles, review the selection, then analyse content risks.</p></div>
+        <div><p className="login-kicker">Content operations dashboard</p><h1 style={st.h1}>FE Content Audit</h1><p style={st.subtitle}>Load FE segments, pre-audit pages at scale, and reserve Claude analysis for priority reviews.</p></div>
         <button style={st.btnOutline} onClick={() => { clearSession(); setAuthed(false); }}>Log out</button>
       </div>
 
+      <div className="dashboard-grid">
+        <div className="metric-card"><p className="metric-label">Segments</p><p className="metric-value">{segments.length}</p></div>
+        <div className="metric-card"><p className="metric-label">Loaded articles</p><p className="metric-value">{totalArticles}</p></div>
+        <div className="metric-card"><p className="metric-label">Analysed</p><p className="metric-value">{resultEntries.length}</p></div>
+        <div className="metric-card"><p className="metric-label">No-cost audits</p><p className="metric-value">{sourceOnlyCount}</p></div>
+      </div>
+
+      <div style={st.card}>
+        <p className="step-label">Step 1</p>
+        <p style={st.stepTitle}>Load segments</p>
+        <p style={st.stepDesc}>Load all active FE segments from the WordPress API. Paste JSON only if automatic loading is unavailable.</p>
+        <a href="https://www.financialexpress.com/wp-json/wp/v2/categories?per_page=100" target="_blank" rel="noopener noreferrer" style={st.link}>https://www.financialexpress.com/wp-json/wp/v2/categories?per_page=100</a>
+        <textarea style={{ minHeight: "80px", marginTop: "10px" }} value={categoriesJson} onChange={(e) => setCategoriesJson(e.target.value)} placeholder="Optional fallback: paste the complete segment JSON here" />
+        <div style={{ marginTop: "12px" }}><button style={st.btnPrimary} onClick={loadSegments}>Load all segments</button></div>
+        {segments.length > 0 && <p style={{ fontSize: "13px", color: C.success, marginTop: "10px", fontWeight: 700 }}>Loaded {segments.length} active segments.</p>}
+        {loadMsg && step === 1 && <p style={{ fontSize: "13px", color: C.error, marginTop: "8px" }}>{loadMsg}</p>}
+      </div>
+
       <div style={st.cardLavender}>
+        <p className="step-label">Workspace</p>
         <p style={{ ...st.stepTitle, fontSize: "18px" }}>Saved analyses (this browser)</p>
         <p style={st.stepDesc}>Export or delete previous analyses without running them again.</p>
         {savedMsg && <p style={{ fontSize: "13px", color: C.success, marginBottom: "8px" }}>{savedMsg}</p>}
@@ -542,19 +692,10 @@ function App() {
         )}
       </div>
 
-      <div style={st.card}>
-        <p style={st.stepTitle}>Step 1 - Load segments</p>
-        <p style={st.stepDesc}>Load all active FE segments from the WordPress API. Paste JSON only if automatic loading is unavailable.</p>
-        <a href="https://www.financialexpress.com/wp-json/wp/v2/categories?per_page=100" target="_blank" rel="noopener noreferrer" style={st.link}>https://www.financialexpress.com/wp-json/wp/v2/categories?per_page=100</a>
-        <textarea style={{ minHeight: "80px", marginTop: "10px" }} value={categoriesJson} onChange={(e) => setCategoriesJson(e.target.value)} placeholder="Optional fallback: paste the complete segment JSON here" />
-        <div style={{ marginTop: "12px" }}><button style={st.btnPrimary} onClick={loadSegments}>Load all segments</button></div>
-        {segments.length > 0 && <p style={{ fontSize: "13px", color: C.success, marginTop: "10px", fontWeight: 700 }}>Loaded {segments.length} active segments.</p>}
-        {loadMsg && step === 1 && <p style={{ fontSize: "13px", color: C.error, marginTop: "8px" }}>{loadMsg}</p>}
-      </div>
-
       {step >= 2 && (
         <div style={st.card}>
-          <p style={st.stepTitle}>Step 2 - Load articles for each segment</p>
+          <p className="step-label">Step 2</p>
+          <p style={st.stepTitle}>Load articles for each segment</p>
           <p style={st.stepDesc}>Choose the date range, select a segment, then load one page or all available pages for that segment.</p>
           <label style={{ display: "block", fontSize: "13px", fontWeight: 700, marginBottom: "12px" }}>Publication month<br /><select aria-label="Publication month" style={{ width: "100%", marginTop: "6px" }} value={selectedMonth} onChange={(e) => selectMonth(e.target.value)}>{monthOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
           <input style={{ width: "100%", marginBottom: "10px" }} placeholder="Search segments" value={segmentSearch} onChange={(e) => setSegmentSearch(e.target.value)} />
@@ -567,9 +708,10 @@ function App() {
           </div>
           <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "10px" }}>
             <span style={{ fontWeight: 700, fontSize: "14px" }}>Selected: {activeSegment || "none"}</span>
-            <label style={st.caption}>Articles per load:</label>
-            <input type="number" style={{ width: "60px" }} value={articlesPerPage} onChange={(e) => setArticlesPerPage(e.target.value)} />
+            <label style={st.caption}>Articles per API page:</label>
+            <input type="number" min="1" max={MAX_ARTICLES_PER_REQUEST} style={{ width: "74px" }} value={articlesPerPage} onChange={(e) => setArticlesPerPage(clampArticlesPerPage(e.target.value))} />
           </div>
+          <p style={{ ...st.caption, marginTop: "-4px" }}>FE WordPress allows up to 100 articles per API page. Use "Load all available pages" to collect larger batches.</p>
           {segmentStatus[activeSegment]?.type === "unsupported" && <div style={{ background: C.errorTint, color: C.error, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
           {segmentStatus[activeSegment]?.type === "end-of-range" && <div style={{ background: C.successTint, color: C.success, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
           {activeSegment && (
@@ -598,8 +740,9 @@ function App() {
 
       {step >= 3 && totalArticles > 0 && (
         <div style={st.card}>
-          <p style={st.stepTitle}>Step 3 - Review before analysis</p>
-          <p style={st.stepDesc}>{totalArticles} articles across {segmentsWithArticles.length} segment(s). Each article requires one analysis request.</p>
+          <p className="step-label">Step 3</p>
+          <p style={st.stepTitle}>Review before analysis</p>
+          <p style={st.stepDesc}>{totalArticles} articles across {segmentsWithArticles.length} segment(s). Use source-only pre-audit for large batches, then run Claude only on pages that need deeper editorial review.</p>
           <div style={{ maxHeight: "260px", overflowY: "auto", border: `1px solid ${C.hairline}`, borderRadius: "8px" }}>
             {segmentsWithArticles.map((seg) => (
               <div key={seg}>
@@ -610,17 +753,19 @@ function App() {
           </div>
           <div style={{ margin: "14px 0", padding: "12px 14px", background: C.lavender, borderRadius: "8px" }}>
             <p style={{ fontSize: "13px", fontWeight: 700, margin: "0 0 8px" }}>Analysis mode:</p>
-            <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={analysisMode === "fe"} onChange={() => setAnalysisMode("fe")} /> FE YMYL/E-E-A-T Guidelines</label>
-            <label style={{ fontSize: "13px" }}><input type="radio" checked={analysisMode === "hcs"} onChange={() => setAnalysisMode("hcs")} /> Google HCS / Spam Audit</label>
+            <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={analysisMode === "source"} onChange={() => setAnalysisMode("source")} /> Source-only pre-audit (no Claude cost)</label>
+            <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={analysisMode === "fe"} onChange={() => setAnalysisMode("fe")} /> Claude: FE YMYL/E-E-A-T Guidelines</label>
+            <label style={{ fontSize: "13px" }}><input type="radio" checked={analysisMode === "hcs"} onChange={() => setAnalysisMode("hcs")} /> Claude: Google HCS / Spam Audit</label>
           </div>
-          <p style={st.caption}>Estimated analysis size: about {(totalArticles * ESTIMATED_TOKENS_PER_ARTICLE).toLocaleString()} Claude tokens before retries. Server caps and rate limits still apply.</p>
+          <p style={st.caption}>{analysisMode === "source" ? "This mode does not call Claude. It finds obvious metadata, sourcing, structure, and thin-content risks from the loaded FE article data." : `Estimated analysis size: about ${(totalArticles * ESTIMATED_TOKENS_PER_ARTICLE).toLocaleString()} Claude tokens before retries. Server caps and rate limits still apply.`}</p>
           <button style={st.btnPrimary} onClick={analyzeAll} disabled={analyzing}>{analyzing ? "Analysing..." : `Analyse all ${totalArticles} articles`}</button>
         </div>
       )}
 
       {step >= 4 && (
         <div style={st.card}>
-          <p style={st.stepTitle}>Step 4 - Content risks by segment</p>
+          <p className="step-label">Step 4</p>
+          <p style={st.stepTitle}>Content risks by segment</p>
           {analyzing && <p style={{ fontSize: "14px", color: C.inkMute }}>{progress}</p>}
           {segmentSummary.length > 0 && (
             <div style={{ marginBottom: "16px" }}>
@@ -652,6 +797,7 @@ function App() {
                       <span style={{ fontSize: "12px", padding: "3px 12px", borderRadius: "90px", background: isBad ? C.errorTint : isMid ? C.warnTint : C.successTint, color: isBad ? C.error : isMid ? C.warn : C.success, fontWeight: 700, whiteSpace: "nowrap" }}>{badgeLabel}</span>
                     </div>
                     <p style={{ ...st.caption, margin: "4px 0 10px" }}>{a?.segment} - {a?.byline || "No byline"} - {formatDate(a?.publish_date)}</p>
+                    {r.source_audit && <p style={st.caption}>Source-only pre-audit. No Claude tokens used.</p>}
                     {r._usage && <p style={st.caption}>Claude usage: {r._usage.input_tokens || 0} input tokens, {r._usage.output_tokens || 0} output tokens.</p>}
                     {r.spam_risk && r.spam_risk !== "none" && <p style={{ fontSize: "12px", color: C.error, fontWeight: 700, margin: "0 0 8px" }}>Spam risk: {r.spam_risk}</p>}
                     {r.findings?.map((f, i) => (
