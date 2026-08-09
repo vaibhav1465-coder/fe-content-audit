@@ -55,6 +55,10 @@ const DAILY_BUDGET_CAP = Number(process.env.DAILY_REQUEST_CAP || 500);
 const PER_MINUTE_LIMIT = Number(process.env.PER_MINUTE_LIMIT_PER_IP || 15);
 const MAX_BODY_TEXT_CHARS = Number(process.env.MAX_BODY_TEXT_CHARS || 8000);
 const MAX_ARTICLE_PAYLOAD_CHARS = Number(process.env.MAX_ARTICLE_PAYLOAD_CHARS || 12000);
+const DEFAULT_STANDARD_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514";
+const DEFAULT_LOW_COST_MODEL = process.env.ANTHROPIC_LOW_COST_MODEL || "claude-3-5-haiku-20241022";
+const DEFAULT_OPENAI_STANDARD_MODEL = process.env.OPENAI_MODEL || "gpt-5.6-terra";
+const DEFAULT_OPENAI_LOW_COST_MODEL = process.env.OPENAI_LOW_COST_MODEL || "gpt-5.6-luna";
 
 function buildUserPrompt(article) {
   const headline = String(article.headline || "(missing)").slice(0, 500);
@@ -74,6 +78,74 @@ function validateArticleInput(article) {
   if (bodyText.length < 80) return "Article body is too short to analyse safely.";
   if (JSON.stringify(article).length > MAX_ARTICLE_PAYLOAD_CHARS) return "Article payload is too large.";
   return "";
+}
+
+function resolveAiConfig(provider, model, costProfile) {
+  if (provider === "openai") {
+    return {
+      provider: "openai",
+      apiKey: process.env.OPENAI_API_KEY,
+      model: model || (costProfile === "low" ? DEFAULT_OPENAI_LOW_COST_MODEL : DEFAULT_OPENAI_STANDARD_MODEL),
+    };
+  }
+  return {
+    provider: "anthropic",
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    model: model || (costProfile === "low" ? DEFAULT_LOW_COST_MODEL : DEFAULT_STANDARD_MODEL),
+  };
+}
+
+async function requestAnthropicAnalysis({ apiKey, model, systemPrompt, article }) {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model,
+      max_tokens: 1000,
+      system: systemPrompt,
+      messages: [{ role: "user", content: buildUserPrompt(article) }],
+    }),
+  });
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Upstream API error: ${errText.slice(0, 500)}`);
+  }
+  const data = await response.json();
+  return {
+    text: data.content?.find((b) => b.type === "text")?.text || "{}",
+    usage: data.usage || null,
+  };
+}
+
+async function requestOpenAiAnalysis({ apiKey, model, systemPrompt, article }) {
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: "system",
+          content: [{ type: "input_text", text: systemPrompt }],
+        },
+        {
+          role: "user",
+          content: [{ type: "input_text", text: buildUserPrompt(article) }],
+        },
+      ],
+      max_output_tokens: 1000,
+      store: false,
+    }),
+  });
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Upstream API error: ${errText.slice(0, 500)}`);
+  }
+  const data = await response.json();
+  return {
+    text: data.output_text || "{}",
+    usage: data.usage || null,
+  };
 }
 
 function normalizeEvidence(value) {
@@ -127,11 +199,11 @@ export default async function handler(req, res) {
   const authResult = verifyToken(req.headers.authorization);
   if (!authResult.valid) return res.status(401).json({ error: authResult.reason });
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: "Server misconfigured: ANTHROPIC_API_KEY not set." });
-
   const article = req.body?.article;
   const mode = req.body?.mode === "hcs" ? "hcs" : "fe";
+  const aiProvider = req.body?.ai_provider === "openai" ? "openai" : "anthropic";
+  const aiModel = typeof req.body?.ai_model === "string" ? req.body.ai_model.trim() : "";
+  const costProfile = req.body?.cost_profile === "low" ? "low" : "standard";
   const articleError = validateArticleInput(article);
   if (articleError) return res.status(400).json({ error: articleError });
 
@@ -150,26 +222,16 @@ export default async function handler(req, res) {
   if (!withinDailyCap) return res.status(429).json({ error: `Daily request cap reached (${DAILY_BUDGET_CAP}/day). Resets at midnight UTC.` });
 
   const systemPrompt = mode === "hcs" ? SYSTEM_PROMPT_HCS : SYSTEM_PROMPT_FE;
+  const config = resolveAiConfig(aiProvider, aiModel, costProfile);
+  if (!config.apiKey) {
+    return res.status(500).json({ error: `Server misconfigured: ${config.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} not set.` });
+  }
 
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1000,
-        system: systemPrompt,
-        messages: [{ role: "user", content: buildUserPrompt(article) }],
-      }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      return res.status(502).json({ error: "Upstream API error", detail: errText.slice(0, 500) });
-    }
-
-    const data = await response.json();
-    const text = data.content?.find((b) => b.type === "text")?.text || "{}";
+    const upstream = config.provider === "openai"
+      ? await requestOpenAiAnalysis({ apiKey: config.apiKey, model: config.model, systemPrompt, article })
+      : await requestAnthropicAnalysis({ apiKey: config.apiKey, model: config.model, systemPrompt, article });
+    const text = upstream.text || "{}";
     const cleaned = text.replace(/```json|```/g, "").trim();
 
     let parsed;
@@ -182,7 +244,10 @@ export default async function handler(req, res) {
         if (!validateAnalysisResult(repaired, article)) {
           return res.status(502).json({ error: "The analysis response was incomplete or not grounded in the article. Please retry." });
         }
-        repaired._usage = data.usage || null;
+        repaired._usage = upstream.usage || null;
+        repaired._model = config.model;
+        repaired._cost_profile = costProfile;
+        repaired._provider = config.provider;
         return res.status(200).json(repaired);
       }
       return res.status(502).json({ error: "Could not parse model output as JSON", raw: cleaned.slice(0, 500) });
@@ -192,9 +257,15 @@ export default async function handler(req, res) {
       return res.status(502).json({ error: "The analysis response was incomplete or not grounded in the article. Please retry." });
     }
 
-    parsed._usage = data.usage || null;
+    parsed._usage = upstream.usage || null;
+    parsed._model = config.model;
+    parsed._cost_profile = costProfile;
+    parsed._provider = config.provider;
     return res.status(200).json(parsed);
   } catch (e) {
+    if (String(e).startsWith("Error: Upstream API error:")) {
+      return res.status(502).json({ error: "Upstream API error", detail: String(e).replace(/^Error: Upstream API error:\s*/, "").slice(0, 500) });
+    }
     return res.status(500).json({ error: "Internal error", detail: String(e).slice(0, 500) });
   }
 }

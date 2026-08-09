@@ -81,6 +81,17 @@ const MAX_ANALYSIS_ARTICLES = 500;
 const BODY_TEXT_LIMIT = 8000;
 const ESTIMATED_TOKENS_PER_ARTICLE = 2600;
 const SOURCE_AUDIT_LIMIT = 5000;
+const AI_PROVIDER_OPTIONS = {
+  anthropic: [
+    { value: "claude-3-5-haiku-20241022", label: "Claude Haiku 3.5 - lower cost" },
+    { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4 - higher quality" },
+  ],
+  openai: [
+    { value: "gpt-5.6-luna", label: "GPT-5.6 Luna - lower cost" },
+    { value: "gpt-5.6-terra", label: "GPT-5.6 Terra - balanced" },
+    { value: "gpt-4.1", label: "GPT-4.1 - stable general model" },
+  ],
+};
 
 function getStoredSession() {
   const token = sessionStorage.getItem(SESSION_KEY);
@@ -119,13 +130,13 @@ async function login(password) {
   storeSession(data.token, data.expiresAt);
 }
 
-async function callAnalyzeApi(article, mode) {
+async function callAnalyzeApi(article, mode, costProfile, aiProvider, aiModel) {
   const token = getStoredSession();
   if (!token) throw new Error("Session expired. Please log in again.");
   const response = await fetch("/api/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ article, mode }),
+    body: JSON.stringify({ article, mode, cost_profile: costProfile, ai_provider: aiProvider, ai_model: aiModel }),
   });
   if (response.status === 401) { clearSession(); throw new Error("Session expired. Please log in again."); }
   if (!response.ok) {
@@ -133,6 +144,19 @@ async function callAnalyzeApi(article, mode) {
     throw new Error(errBody.error || `Request failed with status ${response.status}`);
   }
   return response.json();
+}
+
+async function fetchWpJson(url) {
+  const response = await fetch(url);
+  const text = await response.text();
+  let parsed;
+  try { parsed = text ? JSON.parse(text) : null; }
+  catch (e) { throw new Error("The source API returned unreadable JSON."); }
+  if (!response.ok) {
+    const wpError = detectWpRestError(parsed);
+    throw new Error(wpError ? `${wpError.status} ${wpError.code.replace(/_/g, " ")}` : `HTTP ${response.status}`);
+  }
+  return parsed;
 }
 
 function wait(ms) { return new Promise((resolve) => window.setTimeout(resolve, ms)); }
@@ -148,6 +172,11 @@ function clampArticlesPerPage(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 50;
   return Math.max(1, Math.min(MAX_ARTICLES_PER_REQUEST, Math.floor(parsed)));
+}
+
+function getDefaultModelForProvider(provider, costProfile) {
+  const options = AI_PROVIDER_OPTIONS[provider] || AI_PROVIDER_OPTIONS.anthropic;
+  return costProfile === "standard" ? (options[1]?.value || options[0].value) : options[0].value;
 }
 
 function buildArticleUrl(categoryId, selectedMonthValue, perPage, page) {
@@ -351,6 +380,72 @@ function buildSourceOnlyResult(article) {
   };
 }
 
+function extractUrlFromRow(parts) {
+  return parts.find((part) => /^https?:\/\//i.test(String(part || "").trim())) || "";
+}
+
+function guessSegmentFromUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const pathParts = parsed.pathname.split("/").filter(Boolean);
+    return pathParts[0] || "imported-urls";
+  } catch (e) {
+    return "imported-urls";
+  }
+}
+
+function parseImportedUrlText(text) {
+  const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const firstParts = lines[0].split(/\t|,/).map((part) => part.trim());
+  const hasHeader = firstParts.some((part) => /url|segment/i.test(part));
+  const headerMap = hasHeader ? Object.fromEntries(firstParts.map((part, index) => [part.toLowerCase(), index])) : {};
+  const rows = hasHeader ? lines.slice(1) : lines;
+  return rows.map((line) => {
+    if (/^https?:\/\//i.test(line)) return { url: line, segment: "" };
+    const parts = line.split(/\t|,/).map((part) => part.trim());
+    if (headerMap.url !== undefined) {
+      return {
+        url: parts[headerMap.url] || "",
+        segment: headerMap.segment !== undefined ? (parts[headerMap.segment] || "") : "",
+      };
+    }
+    const url = extractUrlFromRow(parts);
+    const segment = parts.length > 1 && parts[0] !== url ? parts[0] : "";
+    return { url, segment };
+  }).filter((row) => row.url);
+}
+
+function normalizeImportedArticle(article, preferredSegment, sourceUrl) {
+  const normalized = normalizeArticles([article], preferredSegment || guessSegmentFromUrl(sourceUrl))[0];
+  return normalized ? { ...normalized, segment: preferredSegment || normalized.segment || guessSegmentFromUrl(sourceUrl), url: normalized.url || sourceUrl } : null;
+}
+
+async function fetchImportedArticleByUrl(url, preferredSegment) {
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch (e) {
+    throw new Error(`Invalid URL: ${url}`);
+  }
+  if (!/financialexpress\.com$/i.test(parsedUrl.hostname)) {
+    throw new Error("Only Financial Express article URLs are supported right now.");
+  }
+
+  const path = parsedUrl.pathname.replace(/\/+$/, "");
+  const postId = path.match(/-(\d+)$/)?.[1];
+  if (postId) {
+    const article = await fetchWpJson(`${WP_BASE}/posts/${postId}`);
+    return normalizeImportedArticle(article, preferredSegment, url);
+  }
+
+  const slug = path.split("/").filter(Boolean).pop() || "";
+  if (!slug) throw new Error(`Could not detect a post from URL: ${url}`);
+  const matches = await fetchWpJson(`${WP_BASE}/posts?slug=${encodeURIComponent(slug)}`);
+  if (!Array.isArray(matches) || !matches.length) throw new Error(`No FE article was found for URL: ${url}`);
+  return normalizeImportedArticle(matches[0], preferredSegment, url);
+}
+
 function downloadCsv(rows, filename) {
   const esc = (v) => { const s = String(v ?? ""); return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s; };
   const header = ["segment", "headline", "url", "byline", "publish_date", "verdict", "top_finding", "evidence", "why_it_hurts", "fix", "optimization_steps", "expected_improvement", "ymyl_score", "experience", "expertise", "authoritativeness", "trustworthiness", "information_gain_score", "spam_risk"];
@@ -411,10 +506,15 @@ function App() {
   const [articlesPerPage, setArticlesPerPage] = useState(50);
   const [segmentOffsets, setSegmentOffsets] = useState({});
   const [analysisMode, setAnalysisMode] = useState("source");
+  const [aiProvider, setAiProvider] = useState("anthropic");
+  const [aiModel, setAiModel] = useState(AI_PROVIDER_OPTIONS.anthropic[0].value);
+  const [costProfile, setCostProfile] = useState("low");
   const [segmentStatus, setSegmentStatus] = useState({});
   const [segmentSearch, setSegmentSearch] = useState("");
   const [savedAnalyses, setSavedAnalyses] = useState(getSavedAnalyses());
   const [savedMsg, setSavedMsg] = useState("");
+  const [importUrlsText, setImportUrlsText] = useState("");
+  const [importFileName, setImportFileName] = useState("");
   const monthOptions = getMonthOptions();
   const [selectedMonth, setSelectedMonth] = useState(monthOptions[0].value);
 
@@ -456,6 +556,16 @@ function App() {
   function selectMonth(value) {
     setSelectedMonth(value); setSegmentArticles({}); setSegmentOffsets({}); setSegmentStatus({});
     setResults({}); setArticlesJson(""); setLoadMsg(""); setStep(2);
+  }
+
+  function changeAiProvider(provider) {
+    setAiProvider(provider);
+    setAiModel(getDefaultModelForProvider(provider, costProfile));
+  }
+
+  function changeCostProfile(profile) {
+    setCostProfile(profile);
+    setAiModel(getDefaultModelForProvider(aiProvider, profile));
   }
 
   async function addArticlesFromRaw(raw, currentOffset) {
@@ -542,6 +652,64 @@ function App() {
     setLoadingArticles(false);
   }
 
+  async function handleImportFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setImportFileName(file.name);
+    const text = await file.text();
+    setImportUrlsText(text);
+  }
+
+  async function importOwnUrls() {
+    const rows = parseImportedUrlText(importUrlsText);
+    if (!rows.length) {
+      setLoadMsg("Add one FE URL per line, or upload a CSV/TSV with `url` and optional `segment` columns.");
+      return;
+    }
+    setLoadingArticles(true);
+    const imported = [];
+    try {
+      for (let i = 0; i < rows.length; i++) {
+        setProgress(`Importing ${i + 1} of ${rows.length} URLs...`);
+        const article = await fetchImportedArticleByUrl(rows[i].url, rows[i].segment);
+        if (article) imported.push(article);
+      }
+    } catch (error) {
+      setLoadingArticles(false);
+      setProgress("");
+      setLoadMsg(error.message);
+      return;
+    }
+
+    const grouped = imported.reduce((acc, article) => {
+      const segment = article.segment || "imported-urls";
+      if (!acc[segment]) acc[segment] = [];
+      acc[segment].push(article);
+      return acc;
+    }, {});
+
+    setSegments((prev) => {
+      const next = [...prev];
+      Object.keys(grouped).forEach((segment) => { if (!next.includes(segment)) next.push(segment); });
+      return next;
+    });
+    setSegmentArticles((prev) => {
+      const next = { ...prev };
+      Object.entries(grouped).forEach(([segment, articles]) => {
+        const existing = next[segment] || [];
+        const existingIds = new Set(existing.map((article) => article.id));
+        next[segment] = [...existing, ...articles.filter((article) => !existingIds.has(article.id))];
+      });
+      return next;
+    });
+    const firstSegment = Object.keys(grouped)[0];
+    if (firstSegment) setActiveSegment(firstSegment);
+    setStep(3);
+    setLoadMsg(`Imported ${imported.length} FE article URLs from ${importFileName || "the pasted list"}.`);
+    setProgress("");
+    setLoadingArticles(false);
+  }
+
   const totalArticles = Object.values(segmentArticles).flat().length;
   const segmentsWithArticles = Object.keys(segmentArticles).filter((sg) => segmentArticles[sg]?.length > 0);
   const unsupportedSegments = Object.entries(segmentStatus).filter(([, v]) => v.type === "unsupported");
@@ -575,7 +743,7 @@ function App() {
     for (let i = 0; i < allArticles.length; i++) {
       setProgress(`Analyzing ${i + 1} of ${allArticles.length}...`);
       const requestStarted = Date.now();
-      try { newResults[allArticles[i].id] = await callAnalyzeApi(allArticles[i], analysisMode); }
+      try { newResults[allArticles[i].id] = await callAnalyzeApi(allArticles[i], analysisMode, costProfile, aiProvider, aiModel); }
       catch (e) { newResults[allArticles[i].id] = { overall_health: "Weak", findings: [{ severity: "red", issue_name: "Analysis failed", what_is_wrong: String(e.message || e), why_it_hurts: "", fix: "Retry" }], _failed: true }; }
       setResults({ ...newResults });
       if (i < allArticles.length - 1) await wait(Math.max(0, ANALYSIS_INTERVAL_MS - (Date.now() - requestStarted)));
@@ -592,7 +760,7 @@ function App() {
     for (let i = 0; i < toRetry.length; i++) {
       setProgress(`Retrying ${i + 1} of ${toRetry.length}...`);
       const requestStarted = Date.now();
-      try { newResults[toRetry[i].id] = await callAnalyzeApi(toRetry[i], analysisMode); }
+      try { newResults[toRetry[i].id] = await callAnalyzeApi(toRetry[i], analysisMode, costProfile, aiProvider, aiModel); }
       catch (e) { newResults[toRetry[i].id] = { overall_health: "Weak", findings: [{ severity: "red", issue_name: "Failed again", what_is_wrong: String(e.message || e), why_it_hurts: "", fix: "Retry" }], _failed: true }; }
       setResults({ ...newResults });
       if (i < toRetry.length - 1) await wait(Math.max(0, ANALYSIS_INTERVAL_MS - (Date.now() - requestStarted)));
@@ -728,6 +896,18 @@ function App() {
             </React.Fragment>
           )}
           {loadMsg && <p style={{ fontSize: "13px", color: /loaded|added|saved/i.test(loadMsg) ? C.success : C.error, marginTop: "10px", fontWeight: 600 }}>{loadMsg}</p>}
+          <div style={{ marginTop: "18px", paddingTop: "16px", borderTop: `1px solid ${C.hairline}` }}>
+            <p style={{ fontSize: "14px", fontWeight: 700, margin: "0 0 6px" }}>Import your own FE URLs</p>
+            <p style={st.stepDesc}>Paste one Financial Express URL per line, or upload a CSV/TSV exported from Google Sheets or Google Drive. Supported columns: `url` and optional `segment`.</p>
+            <textarea style={{ minHeight: "96px", marginBottom: "10px" }} value={importUrlsText} onChange={(e) => setImportUrlsText(e.target.value)} placeholder={"Examples:\nhttps://www.financialexpress.com/business/...-4312602/\nmarkets,https://www.financialexpress.com/market/...-4312501/"} />
+            <div className="toolbar-row">
+              <input type="file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" onChange={handleImportFile} />
+              {importFileName && <span style={st.caption}>Loaded file: {importFileName}</span>}
+            </div>
+            <div style={{ marginTop: "10px" }}>
+              <button style={st.btnOutline} onClick={importOwnUrls} disabled={loadingArticles}>Import FE URLs</button>
+            </div>
+          </div>
           {unsupportedSegments.length > 0 && (
             <div style={{ marginTop: "14px", borderTop: `1px solid ${C.hairline}`, paddingTop: "12px" }}>
               <p style={{ fontSize: "13px", fontWeight: 700, color: C.error, margin: "0 0 6px" }}>Segments unavailable through this API:</p>
@@ -757,7 +937,32 @@ function App() {
             <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={analysisMode === "fe"} onChange={() => setAnalysisMode("fe")} /> Claude: FE YMYL/E-E-A-T Guidelines</label>
             <label style={{ fontSize: "13px" }}><input type="radio" checked={analysisMode === "hcs"} onChange={() => setAnalysisMode("hcs")} /> Claude: Google HCS / Spam Audit</label>
           </div>
-          <p style={st.caption}>{analysisMode === "source" ? "This mode does not call Claude. It finds obvious metadata, sourcing, structure, and thin-content risks from the loaded FE article data." : `Estimated analysis size: about ${(totalArticles * ESTIMATED_TOKENS_PER_ARTICLE).toLocaleString()} Claude tokens before retries. Server caps and rate limits still apply.`}</p>
+          {analysisMode !== "source" && (
+            <div style={{ marginBottom: "12px" }}>
+              <p style={{ fontSize: "13px", fontWeight: 700, margin: "0 0 8px" }}>AI provider:</p>
+              <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={aiProvider === "anthropic"} onChange={() => changeAiProvider("anthropic")} /> Anthropic API</label>
+              <label style={{ fontSize: "13px" }}><input type="radio" checked={aiProvider === "openai"} onChange={() => changeAiProvider("openai")} /> OpenAI API</label>
+            </div>
+          )}
+          {analysisMode !== "source" && (
+            <div style={{ marginBottom: "12px" }}>
+              <p style={{ fontSize: "13px", fontWeight: 700, margin: "0 0 8px" }}>Cost profile:</p>
+              <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={costProfile === "low"} onChange={() => changeCostProfile("low")} /> Lower cost</label>
+              <label style={{ fontSize: "13px" }}><input type="radio" checked={costProfile === "standard"} onChange={() => changeCostProfile("standard")} /> Higher quality</label>
+            </div>
+          )}
+          {analysisMode !== "source" && (
+            <div style={{ marginBottom: "12px" }}>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: 700, marginBottom: "8px" }}>
+                {aiProvider === "anthropic" ? "Claude model" : "OpenAI model"}
+                <br />
+                <select aria-label="AI model" style={{ width: "100%", marginTop: "6px" }} value={aiModel} onChange={(e) => setAiModel(e.target.value)}>
+                  {(AI_PROVIDER_OPTIONS[aiProvider] || []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+            </div>
+          )}
+          <p style={st.caption}>{analysisMode === "source" ? "This mode does not call Claude or OpenAI. It finds obvious metadata, sourcing, structure, and thin-content risks from the loaded FE article data." : `Current provider: ${aiProvider === "anthropic" ? "Anthropic" : "OpenAI"}. Selected model: ${aiModel}. Estimated analysis size: about ${(totalArticles * ESTIMATED_TOKENS_PER_ARTICLE).toLocaleString()} model tokens before retries. Server caps and rate limits still apply.`}</p>
           <button style={st.btnPrimary} onClick={analyzeAll} disabled={analyzing}>{analyzing ? "Analysing..." : `Analyse all ${totalArticles} articles`}</button>
         </div>
       )}
@@ -798,7 +1003,8 @@ function App() {
                     </div>
                     <p style={{ ...st.caption, margin: "4px 0 10px" }}>{a?.segment} - {a?.byline || "No byline"} - {formatDate(a?.publish_date)}</p>
                     {r.source_audit && <p style={st.caption}>Source-only pre-audit. No Claude tokens used.</p>}
-                    {r._usage && <p style={st.caption}>Claude usage: {r._usage.input_tokens || 0} input tokens, {r._usage.output_tokens || 0} output tokens.</p>}
+                    {r._model && <p style={st.caption}>Model used: {r._model}{r._provider ? ` via ${r._provider}` : ""}{r._cost_profile ? ` (${r._cost_profile} cost profile)` : ""}</p>}
+                    {r._usage && <p style={st.caption}>API usage: {r._usage.input_tokens || 0} input tokens, {r._usage.output_tokens || 0} output tokens.</p>}
                     {r.spam_risk && r.spam_risk !== "none" && <p style={{ fontSize: "12px", color: C.error, fontWeight: 700, margin: "0 0 8px" }}>Spam risk: {r.spam_risk}</p>}
                     {r.findings?.map((f, i) => (
                       <div key={i} style={{ fontSize: "13px", marginBottom: "8px", paddingLeft: "10px", borderLeft: `3px solid ${f.severity === "red" ? C.error : C.warn}` }}>

@@ -44,6 +44,8 @@ Check `git status` before committing - `.env` must never appear in the list.
 | Variable | Value | Source |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | `sk-ant-...` | Anthropic Console |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Anthropic standard-review model |
+| `ANTHROPIC_LOW_COST_MODEL` | `claude-3-5-haiku-20241022` | Anthropic lower-cost review model |
 | `APP_PASSWORD` | Strong shared password | Your team |
 | `SESSION_SECRET` | Generated random string | Step 2 |
 | `SUPABASE_URL` | `https://xxxxx.supabase.co` | Supabase |
@@ -67,6 +69,12 @@ Open the production URL, sign in with `APP_PASSWORD`, load segments, and run one
 Use a separate Anthropic API key for this product when possible. That keeps billing, usage alerts, and key rotation separate from other tools. Also set a monthly spending limit in the Anthropic Console as an independent safety control.
 
 For large segment work, start with **Source-only pre-audit**. It uses the loaded FE article data and does not call Claude. Use Claude modes only for high-risk pages, samples, or pages selected for deeper editorial review.
+
+When you do need Claude recommendations, the product supports two cost profiles:
+- Lower cost: Haiku
+- Higher quality: Sonnet
+
+Paste or upload FE URL lists in Step 2 using plain text, CSV, TSV, or Google Sheets/Google Drive exports. The importer supports `url` and optional `segment` columns.
 
 ## Notes
 
