@@ -81,6 +81,7 @@ const MAX_ANALYSIS_ARTICLES = 500;
 const BODY_TEXT_LIMIT = 8000;
 const ESTIMATED_TOKENS_PER_ARTICLE = 2600;
 const SOURCE_AUDIT_LIMIT = 5000;
+const RECOMMENDATION_COUNT_OPTIONS = [50, 100, 150, 200, 250, 300, 350, 400, 450, 500];
 const AI_PROVIDER_OPTIONS = {
   anthropic: [
     { value: "claude-3-5-haiku-20241022", label: "Claude Haiku 3.5 - lower cost" },
@@ -177,6 +178,12 @@ function clampArticlesPerPage(value) {
 function getDefaultModelForProvider(provider, costProfile) {
   const options = AI_PROVIDER_OPTIONS[provider] || AI_PROVIDER_OPTIONS.anthropic;
   return costProfile === "standard" ? (options[1]?.value || options[0].value) : options[0].value;
+}
+
+function clampRecommendationLimit(value, total) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return Math.min(50, total || 50);
+  return Math.max(1, Math.min(total || parsed, parsed));
 }
 
 function buildArticleUrl(categoryId, selectedMonthValue, perPage, page) {
@@ -509,6 +516,8 @@ function App() {
   const [aiProvider, setAiProvider] = useState("anthropic");
   const [aiModel, setAiModel] = useState(AI_PROVIDER_OPTIONS.anthropic[0].value);
   const [costProfile, setCostProfile] = useState("low");
+  const [selectedArticleIds, setSelectedArticleIds] = useState({});
+  const [recommendationLimit, setRecommendationLimit] = useState(50);
   const [segmentStatus, setSegmentStatus] = useState({});
   const [segmentSearch, setSegmentSearch] = useState("");
   const [savedAnalyses, setSavedAnalyses] = useState(getSavedAnalyses());
@@ -555,7 +564,7 @@ function App() {
 
   function selectMonth(value) {
     setSelectedMonth(value); setSegmentArticles({}); setSegmentOffsets({}); setSegmentStatus({});
-    setResults({}); setArticlesJson(""); setLoadMsg(""); setStep(2);
+    setResults({}); setArticlesJson(""); setLoadMsg(""); setSelectedArticleIds({}); setStep(2);
   }
 
   function changeAiProvider(provider) {
@@ -566,6 +575,20 @@ function App() {
   function changeCostProfile(profile) {
     setCostProfile(profile);
     setAiModel(getDefaultModelForProvider(aiProvider, profile));
+  }
+
+  function toggleArticleSelection(articleId, checked) {
+    setSelectedArticleIds((prev) => {
+      const next = { ...prev };
+      if (checked) next[articleId] = true;
+      else delete next[articleId];
+      return next;
+    });
+  }
+
+  function selectAllLoadedArticles(limit) {
+    const allArticles = Object.values(segmentArticles).flat().slice(0, limit);
+    setSelectedArticleIds(Object.fromEntries(allArticles.map((article) => [article.id, true])));
   }
 
   async function addArticlesFromRaw(raw, currentOffset) {
@@ -589,7 +612,7 @@ function App() {
     });
     const arts = await resolveBylines(normalized);
     if (arts.length === 0) {
-      setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: "No recognised articles matched the selected month." } }));
+      setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "empty", reason: `No pages were published in ${monthOptions.find((option) => option.value === selectedMonth)?.label}. Try another month or use Last 12 months.` } }));
       setLoadMsg(`No articles were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.`);
       return;
     }
@@ -598,7 +621,15 @@ function App() {
     setSegmentArticles((prev) => {
       const existing = prev[activeSegment] || [];
       const existingIds = new Set(existing.map((a) => a.id));
-      return { ...prev, [activeSegment]: [...existing, ...arts.filter((a) => !existingIds.has(a.id))] };
+      const added = arts.filter((a) => !existingIds.has(a.id));
+      if (added.length) {
+        setSelectedArticleIds((current) => {
+          const next = { ...current };
+          added.forEach((article) => { next[article.id] = true; });
+          return next;
+        });
+      }
+      return { ...prev, [activeSegment]: [...existing, ...added] };
     });
     setSegmentOffsets((prev) => ({ ...prev, [activeSegment]: currentOffset + clampArticlesPerPage(articlesPerPage) }));
     setArticlesJson("");
@@ -698,7 +729,15 @@ function App() {
       Object.entries(grouped).forEach(([segment, articles]) => {
         const existing = next[segment] || [];
         const existingIds = new Set(existing.map((article) => article.id));
-        next[segment] = [...existing, ...articles.filter((article) => !existingIds.has(article.id))];
+        const added = articles.filter((article) => !existingIds.has(article.id));
+        next[segment] = [...existing, ...added];
+        if (added.length) {
+          setSelectedArticleIds((current) => {
+            const nextSelection = { ...current };
+            added.forEach((article) => { nextSelection[article.id] = true; });
+            return nextSelection;
+          });
+        }
       });
       return next;
     });
@@ -711,12 +750,21 @@ function App() {
   }
 
   const totalArticles = Object.values(segmentArticles).flat().length;
+  const allLoadedArticles = Object.values(segmentArticles).flat();
+  const selectedArticles = allLoadedArticles.filter((article) => selectedArticleIds[article.id]);
+  const recommendationCap = clampRecommendationLimit(recommendationLimit, totalArticles || 50);
+  const selectedRecommendationArticles = selectedArticles.slice(0, recommendationCap);
   const segmentsWithArticles = Object.keys(segmentArticles).filter((sg) => segmentArticles[sg]?.length > 0);
   const unsupportedSegments = Object.entries(segmentStatus).filter(([, v]) => v.type === "unsupported");
+  const emptySegments = Object.entries(segmentStatus).filter(([, v]) => v.type === "empty");
   const filteredSegments = segments.filter((sg) => sg.toLowerCase().includes(segmentSearch.toLowerCase()));
 
   async function analyzeAll() {
-    const allArticles = Object.values(segmentArticles).flat();
+    const allArticles = selectedRecommendationArticles;
+    if (!allArticles.length) {
+      setLoadMsg("Select at least one page before running recommendations.");
+      return;
+    }
     if (analysisMode === "source") {
       if (allArticles.length > SOURCE_AUDIT_LIMIT) {
         setLoadMsg(`This source-only run has ${allArticles.length} articles. Reduce it to ${SOURCE_AUDIT_LIMIT} or fewer for browser reliability.`);
@@ -753,7 +801,7 @@ function App() {
 
   async function retryFailed() {
     setAnalyzing(true);
-    const allArticles = Object.values(segmentArticles).flat();
+    const allArticles = selectedRecommendationArticles;
     const failedIds = Object.entries(results).filter(([, r]) => r._failed).map(([id]) => id);
     const toRetry = allArticles.filter((a) => failedIds.includes(a.id));
     const newResults = { ...results };
@@ -881,6 +929,7 @@ function App() {
           </div>
           <p style={{ ...st.caption, marginTop: "-4px" }}>FE WordPress allows up to 100 articles per API page. Use "Load all available pages" to collect larger batches.</p>
           {segmentStatus[activeSegment]?.type === "unsupported" && <div style={{ background: C.errorTint, color: C.error, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
+          {segmentStatus[activeSegment]?.type === "empty" && <div style={{ background: C.warnTint, color: C.warn, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
           {segmentStatus[activeSegment]?.type === "end-of-range" && <div style={{ background: C.successTint, color: C.success, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
           {activeSegment && (
             <React.Fragment>
@@ -914,6 +963,12 @@ function App() {
               {unsupportedSegments.map(([sg, v]) => <p key={sg} style={{ fontSize: "12px", color: C.error, margin: "0 0 4px" }}><strong>{sg}</strong>: {v.reason}</p>)}
             </div>
           )}
+          {emptySegments.length > 0 && (
+            <div style={{ marginTop: "14px", borderTop: `1px solid ${C.hairline}`, paddingTop: "12px" }}>
+              <p style={{ fontSize: "13px", fontWeight: 700, color: C.warn, margin: "0 0 6px" }}>Segments with no pages in this date range:</p>
+              {emptySegments.map(([sg, v]) => <p key={sg} style={{ fontSize: "12px", color: C.warn, margin: "0 0 4px" }}><strong>{sg}</strong>: {v.reason}</p>)}
+            </div>
+          )}
           {segmentsWithArticles.length > 0 && <div style={{ marginTop: "14px" }}><button style={st.btnPrimary} onClick={() => setStep(3)}>Continue to review ({totalArticles} total)</button></div>}
         </div>
       )}
@@ -922,12 +977,31 @@ function App() {
         <div style={st.card}>
           <p className="step-label">Step 3</p>
           <p style={st.stepTitle}>Review before analysis</p>
-          <p style={st.stepDesc}>{totalArticles} articles across {segmentsWithArticles.length} segment(s). Use source-only pre-audit for large batches, then run Claude only on pages that need deeper editorial review.</p>
+          <p style={st.stepDesc}>{totalArticles} articles across {segmentsWithArticles.length} segment(s). Choose exactly which pages should receive recommendations, then decide whether to use source-only review or a paid model.</p>
+          <div className="toolbar-row" style={{ marginBottom: "12px" }}>
+            <label style={{ fontSize: "13px", fontWeight: 700 }}>
+              Recommendation count
+              <br />
+              <select aria-label="Recommendation count" style={{ width: "160px", marginTop: "6px" }} value={recommendationCap} onChange={(e) => setRecommendationLimit(Number(e.target.value))}>
+                {RECOMMENDATION_COUNT_OPTIONS.filter((count) => count <= Math.max(totalArticles, 50)).map((count) => <option key={count} value={count}>{count} pages</option>)}
+                {totalArticles > RECOMMENDATION_COUNT_OPTIONS[RECOMMENDATION_COUNT_OPTIONS.length - 1] && <option value={Math.min(totalArticles, recommendationCap)}>{Math.min(totalArticles, recommendationCap)} pages</option>}
+              </select>
+            </label>
+            <button style={st.btnOutline} onClick={() => selectAllLoadedArticles(recommendationCap)}>Select first {recommendationCap}</button>
+            <button style={st.btnOutline} onClick={() => setSelectedArticleIds(Object.fromEntries(allLoadedArticles.map((article) => [article.id, true])))}>Select all loaded</button>
+            <button style={st.btnOutlineError} onClick={() => setSelectedArticleIds({})}>Clear selection</button>
+            <span style={st.caption}>{selectedArticles.length} selected, {selectedRecommendationArticles.length} will run recommendations.</span>
+          </div>
           <div style={{ maxHeight: "260px", overflowY: "auto", border: `1px solid ${C.hairline}`, borderRadius: "8px" }}>
             {segmentsWithArticles.map((seg) => (
               <div key={seg}>
                 <div style={{ background: C.cream, padding: "8px 14px", fontSize: "13px", fontWeight: 700 }}>{seg} ({segmentArticles[seg].length})</div>
-                {segmentArticles[seg].map((a) => <div key={a.id} style={{ padding: "8px 14px", fontSize: "13px", borderBottom: `1px solid ${C.hairline}` }}>{a.headline} <span style={st.caption}>- {a.byline || "No byline"} - {formatDate(a.publish_date)}</span></div>)}
+                {segmentArticles[seg].map((a) => (
+                  <label key={a.id} style={{ display: "flex", gap: "10px", alignItems: "flex-start", padding: "8px 14px", fontSize: "13px", borderBottom: `1px solid ${C.hairline}`, cursor: "pointer" }}>
+                    <input type="checkbox" checked={Boolean(selectedArticleIds[a.id])} onChange={(e) => toggleArticleSelection(a.id, e.target.checked)} style={{ marginTop: "2px" }} />
+                    <span>{a.headline} <span style={st.caption}>- {a.byline || "No byline"} - {formatDate(a.publish_date)}</span></span>
+                  </label>
+                ))}
               </div>
             ))}
           </div>
@@ -962,8 +1036,8 @@ function App() {
               </label>
             </div>
           )}
-          <p style={st.caption}>{analysisMode === "source" ? "This mode does not call Claude or OpenAI. It finds obvious metadata, sourcing, structure, and thin-content risks from the loaded FE article data." : `Current provider: ${aiProvider === "anthropic" ? "Anthropic" : "OpenAI"}. Selected model: ${aiModel}. Estimated analysis size: about ${(totalArticles * ESTIMATED_TOKENS_PER_ARTICLE).toLocaleString()} model tokens before retries. Server caps and rate limits still apply.`}</p>
-          <button style={st.btnPrimary} onClick={analyzeAll} disabled={analyzing}>{analyzing ? "Analysing..." : `Analyse all ${totalArticles} articles`}</button>
+          <p style={st.caption}>{analysisMode === "source" ? `This mode does not call Claude or OpenAI. ${selectedRecommendationArticles.length} selected pages will run in source-only review.` : `Current provider: ${aiProvider === "anthropic" ? "Anthropic" : "OpenAI"}. Selected model: ${aiModel}. Estimated analysis size: about ${(selectedRecommendationArticles.length * ESTIMATED_TOKENS_PER_ARTICLE).toLocaleString()} model tokens before retries for ${selectedRecommendationArticles.length} selected pages.`}</p>
+          <button style={st.btnPrimary} onClick={analyzeAll} disabled={analyzing}>{analyzing ? "Analysing..." : `Run recommendations for ${selectedRecommendationArticles.length} selected pages`}</button>
         </div>
       )}
 

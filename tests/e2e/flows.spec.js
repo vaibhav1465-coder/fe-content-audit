@@ -65,7 +65,7 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   await expect(page.getByText(/FE Desk/)).toBeVisible();
   await page.getByLabel("Claude: FE YMYL/E-E-A-T Guidelines").check();
   await page.getByLabel("Higher quality").check();
-  await page.getByRole("button", { name: "Analyse all 1 articles" }).click();
+  await page.getByRole("button", { name: "Run recommendations for 1 selected pages" }).click();
   await expect(page.getByText("Add expert sourcing.")).toBeVisible();
   await expect(page.getByText("Evidence:")).toBeVisible();
   await expect(page.getByText("Ask a qualified expert to explain it.")).toBeVisible();
@@ -113,7 +113,7 @@ test("source-only pre-audit runs without calling Claude", async ({ page }) => {
   await page.getByRole("button", { name: /Continue to review/ }).click();
   await expect(page.getByLabel("Source-only pre-audit (no Claude cost)")).toBeChecked();
   await expect(page.getByText("This mode does not call Claude or OpenAI.")).toBeVisible();
-  await page.getByRole("button", { name: "Analyse all 1 articles" }).click();
+  await page.getByRole("button", { name: "Run recommendations for 1 selected pages" }).click();
   await expect(page.getByText("Source-only pre-audit. No Claude tokens used.")).toBeVisible();
   expect(analysisCalls).toBe(0);
 });
@@ -128,7 +128,7 @@ test("OpenAI provider selection sends the chosen model", async ({ page }) => {
     expect(route.request().postDataJSON().ai_provider).toBe("openai");
     expect(route.request().postDataJSON().ai_model).toBe("gpt-4.1");
     expect(route.request().postDataJSON().cost_profile).toBe("standard");
-    await route.fulfill({ json: { overall_health: "Needs Work", findings: [{ severity: "yellow", issue_name: "Clarity", evidence: "Article body", what_is_wrong: "The article needs one more example.", why_it_hurts: "Readers may need clearer context.", fix: "Add one example.", optimization_steps: ["Add one example.", "Keep the explanation concise."], expected_improvement: "This can make the advice easier to follow." }], bottom_line: "Add one practical example." } });
+    await route.fulfill({ json: { overall_health: "Needs Work", findings: [{ severity: "yellow", issue_name: "Clarity", evidence: "Article body", what_is_wrong: "The article needs one more example.", why_it_hurts: "Readers may need clearer context.", fix: "Add one example.", optimization_steps: ["Add one example.", "Keep the explanation concise."], expected_improvement: "This can make the advice easier to follow." }], bottom_line: "Add one practical example.", _model: "gpt-4.1", _provider: "openai" } });
   });
   await page.route("**/wp-json/wp/v2/coauthors?**", async (route) => {
     await route.fulfill({ json: [{ id: 407, name: "fe-desk", slug: "cap-fe-desk" }] });
@@ -156,8 +156,8 @@ test("OpenAI provider selection sends the chosen model", async ({ page }) => {
   await page.getByLabel("OpenAI API").check();
   await page.getByLabel("Higher quality").check();
   await page.getByLabel("AI model").selectOption("gpt-4.1");
-  await page.getByRole("button", { name: "Analyse all 1 articles" }).click();
-  await expect(page.getByText("Selected model: gpt-4.1.")).toBeVisible();
+  await page.getByRole("button", { name: "Run recommendations for 1 selected pages" }).click();
+  await expect(page.getByText("Model used: gpt-4.1 via openai")).toBeVisible();
   expect(analysisCalls).toBe(1);
 });
 
