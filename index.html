@@ -44,7 +44,7 @@
 <body>
 <div id="root"></div>
 <script type="text/babel" data-plugins="transform-react-jsx">
-const { useState } = React;
+const { useEffect, useState } = React;
 
 const C = {
   primary: "#4a154b", onPrimary: "#ffffff", ink: "#1d1d1d", inkMute: "#696969",
@@ -67,6 +67,7 @@ const st = {
   pillTag: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "10px", background: C.lavender, color: C.primary, border: "1px solid transparent", cursor: "pointer" },
   pillTagActive: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "10px", background: C.primary, color: C.onPrimary, border: "1px solid transparent", cursor: "pointer" },
   pillTagBad: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "10px", background: C.errorTint, color: C.error, border: "1px solid transparent", cursor: "pointer" },
+  pillTagWarn: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "10px", background: C.warnTint, color: C.warn, border: "1px solid transparent", cursor: "pointer" },
   caption: { fontSize: "12px", color: C.inkMute },
 };
 
@@ -285,9 +286,9 @@ function normalizeArticles(raw, segment) {
     }
     if (Array.isArray(raw?.list?.[0]?.items)) {
       return raw.list[0].items.map((it) => ({
-        id: String(it.id), headline: it.headline || it.title, subheading: it.introduction,
+        id: String(it.id), headline: stripHtml(it.headline || it.title), subheading: stripHtml(it.introduction),
         byline: (it.byline || []).map((b) => b.name).join(", "), publish_date: it.post_date,
-        body_text: it.body_raw || it.body, url: it.post_url, segment,
+        body_text: stripHtml(it.body_raw || it.body), url: it.post_url, segment,
         category_ids: (it.categories || []).map((category) => Number(category.id)),
         category_slugs: (it.categories || []).map((category) => String(category.slug || "")),
       }));
@@ -306,6 +307,35 @@ async function fetchLatestFallbackArticles(segmentSlug, categoryId, selectedMont
     return inDateRange && inSegment;
   }).slice(0, clampArticlesPerPage(perPage));
   return resolveBylines(filtered);
+}
+
+async function checkSegmentAvailability(segmentSlug, categoryId, selectedMonthValue) {
+  try {
+    const result = await fetchJsonWithMeta(buildArticleUrl(categoryId, selectedMonthValue, 1, 1));
+    if (Array.isArray(result.data) && result.data.length > 0) {
+      return { type: "ready", reason: "" };
+    }
+    if (result.total > 0) {
+      return { type: "ready", reason: "" };
+    }
+  } catch (apiError) {
+    if (/unreadable json/i.test(apiError.message)) {
+      return { type: "unsupported", reason: "This segment is returning HTML or unreadable JSON for the selected month." };
+    }
+    try {
+      const fallbackArticles = await fetchLatestFallbackArticles(segmentSlug, categoryId, selectedMonthValue, 1);
+      if (fallbackArticles.length > 0) {
+        return { type: "ready", reason: "" };
+      }
+      return { type: "empty", reason: "No pages were found for this month/year selection." };
+    } catch (fallbackError) {
+      const message = /unreadable json/i.test(fallbackError.message)
+        ? "This segment is returning HTML or unreadable JSON for the selected month."
+        : `${apiError.message}. Fallback also failed: ${fallbackError.message}`;
+      return { type: "unsupported", reason: message };
+    }
+  }
+  return { type: "empty", reason: "No pages were found for this month/year selection." };
 }
 
 function textContainsAny(text, patterns) {
@@ -542,6 +572,7 @@ function App() {
   const [savedMsg, setSavedMsg] = useState("");
   const [importUrlsText, setImportUrlsText] = useState("");
   const [importFileName, setImportFileName] = useState("");
+  const [checkingSegments, setCheckingSegments] = useState(false);
   const monthOptions = getMonthOptions();
   const [selectedMonth, setSelectedMonth] = useState(monthOptions[0].value);
 
@@ -584,6 +615,46 @@ function App() {
     setSelectedMonth(value); setSegmentArticles({}); setSegmentOffsets({}); setSegmentStatus({});
     setResults({}); setArticlesJson(""); setLoadMsg(""); setSelectedArticleIds({}); setStep(2);
   }
+
+  useEffect(() => {
+    if (step < 2 || segments.length === 0) return;
+    let cancelled = false;
+
+    async function scanSegments() {
+      setCheckingSegments(true);
+      setLoadMsg(`Checking segment availability for ${monthOptions.find((option) => option.value === selectedMonth)?.label}...`);
+      const updates = {};
+      for (const segment of segments) {
+        if (!segmentIds[segment]) continue;
+        updates[segment] = await checkSegmentAvailability(segment, segmentIds[segment], selectedMonth);
+        if (cancelled) return;
+      }
+      if (cancelled) return;
+      setSegmentStatus((prev) => {
+        const next = { ...prev };
+        Object.entries(updates).forEach(([segment, status]) => {
+          const existing = next[segment];
+          if (!existing || existing.type !== "ok" || !segmentArticles[segment]?.length) {
+            next[segment] = status.type === "ready" ? { type: "idle", reason: "" } : status;
+          }
+        });
+        return next;
+      });
+      const firstUsableSegment = segments.find((segment) => !(updates[segment] && updates[segment].type !== "ready"));
+      if ((!firstUsableSegment || updates[activeSegment]?.type && updates[activeSegment].type !== "ready") && firstUsableSegment) {
+        setActiveSegment(firstUsableSegment);
+      }
+      setLoadMsg(`Segment availability checked for ${monthOptions.find((option) => option.value === selectedMonth)?.label}.`);
+      setCheckingSegments(false);
+    }
+
+    scanSegments().catch(() => {
+      if (!cancelled) {
+        setCheckingSegments(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [step, segments, segmentIds, selectedMonth]);
 
   function changeAiProvider(provider) {
     setAiProvider(provider);
@@ -957,10 +1028,14 @@ function App() {
           <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "14px", maxHeight: "140px", overflowY: "auto" }}>
             {filteredSegments.map((sg) => {
               const status = segmentStatus[sg];
-              const pillStyle = sg === activeSegment ? st.pillTagActive : status?.type === "unsupported" ? st.pillTagBad : st.pillTag;
-              return <button key={sg} style={pillStyle} onClick={() => selectSegment(sg)}>{status?.type === "unsupported" && "Unavailable "}{status?.type === "ok" && "Loaded "}{sg}{segmentArticles[sg]?.length ? ` (${segmentArticles[sg].length})` : ""}</button>;
+              const isUnavailable = status?.type === "unsupported";
+              const isEmpty = status?.type === "empty";
+              const isLoaded = status?.type === "ok";
+              const pillStyle = sg === activeSegment ? st.pillTagActive : isUnavailable ? st.pillTagBad : isEmpty ? st.pillTagWarn : st.pillTag;
+              return <button key={sg} style={{ ...pillStyle, opacity: isUnavailable || isEmpty ? 0.92 : 1 }} onClick={() => selectSegment(sg)} disabled={isUnavailable || isEmpty}>{isUnavailable && "Unavailable "}{isEmpty && "No pages "}{isLoaded && "Loaded "}{sg}{segmentArticles[sg]?.length ? ` (${segmentArticles[sg].length})` : ""}</button>;
             })}
           </div>
+          {checkingSegments && <p style={{ ...st.caption, marginTop: "-4px", marginBottom: "10px" }}>Checking which segments have valid pages for this month/year. Categories marked "Unavailable" or "No pages" should be skipped.</p>}
           <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "10px" }}>
             <span style={{ fontWeight: 700, fontSize: "14px" }}>Selected: {activeSegment || "none"}</span>
             <label style={st.caption}>Articles per API page:</label>
