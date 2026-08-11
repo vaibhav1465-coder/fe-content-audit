@@ -144,7 +144,9 @@ async function callAnalyzeApi(article, mode, costProfile, aiProvider, aiModel) {
   if (response.status === 401) { clearSession(); throw new Error("Session expired. Please log in again."); }
   if (!response.ok) {
     const errBody = await response.json().catch(() => ({}));
-    throw new Error(errBody.error || `Request failed with status ${response.status}`);
+    const signal = errBody.config_signal ? ` [provider=${errBody.config_signal.provider}, model=${errBody.config_signal.model}, key=${errBody.config_signal.key_fingerprint}]` : "";
+    const detail = errBody.detail ? ` - ${errBody.detail}` : "";
+    throw new Error((errBody.error || `Request failed with status ${response.status}`) + detail + signal);
   }
   return response.json();
 }

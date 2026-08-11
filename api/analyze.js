@@ -3,6 +3,7 @@
 // daily budget cap. Supports two analysis modes selected by the client.
 
 import { createClient } from "@supabase/supabase-js";
+import { createHash } from "node:crypto";
 import { verifyToken } from "./_verifyToken.js";
 
 const SYSTEM_PROMPT_FE = `You are the FE Content Health Agent, a senior SEO & Content Head reviewing Financial Express articles against 13 YMYL/E-E-A-T guidelines. Score ONLY on what is actually present in the article given. Never guess. Every finding must reference something specific and real from THIS article.
@@ -59,6 +60,11 @@ const DEFAULT_STANDARD_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-2
 const DEFAULT_LOW_COST_MODEL = process.env.ANTHROPIC_LOW_COST_MODEL || "claude-3-5-haiku-20241022";
 const DEFAULT_OPENAI_STANDARD_MODEL = process.env.OPENAI_MODEL || "gpt-5.6-terra";
 const DEFAULT_OPENAI_LOW_COST_MODEL = process.env.OPENAI_LOW_COST_MODEL || "gpt-5.6-luna";
+
+function fingerprintKey(apiKey) {
+  if (!apiKey) return "missing";
+  return createHash("sha256").update(String(apiKey)).digest("hex").slice(0, 10);
+}
 
 function buildUserPrompt(article) {
   const headline = String(article.headline || "(missing)").slice(0, 500);
@@ -226,6 +232,12 @@ export default async function handler(req, res) {
   if (!config.apiKey) {
     return res.status(500).json({ error: `Server misconfigured: ${config.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} not set.` });
   }
+  const configSignal = {
+    provider: config.provider,
+    model: config.model,
+    key_fingerprint: fingerprintKey(config.apiKey),
+    key_env: config.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY",
+  };
 
   try {
     const upstream = config.provider === "openai"
@@ -248,24 +260,26 @@ export default async function handler(req, res) {
         repaired._model = config.model;
         repaired._cost_profile = costProfile;
         repaired._provider = config.provider;
+        repaired._config_signal = configSignal;
         return res.status(200).json(repaired);
       }
-      return res.status(502).json({ error: "Could not parse model output as JSON", raw: cleaned.slice(0, 500) });
+      return res.status(502).json({ error: "Could not parse model output as JSON", raw: cleaned.slice(0, 500), config_signal: configSignal });
     }
 
     if (!validateAnalysisResult(parsed, article)) {
-      return res.status(502).json({ error: "The analysis response was incomplete or not grounded in the article. Please retry." });
+      return res.status(502).json({ error: "The analysis response was incomplete or not grounded in the article. Please retry.", config_signal: configSignal });
     }
 
     parsed._usage = upstream.usage || null;
     parsed._model = config.model;
     parsed._cost_profile = costProfile;
     parsed._provider = config.provider;
+    parsed._config_signal = configSignal;
     return res.status(200).json(parsed);
   } catch (e) {
     if (String(e).startsWith("Error: Upstream API error:")) {
-      return res.status(502).json({ error: "Upstream API error", detail: String(e).replace(/^Error: Upstream API error:\s*/, "").slice(0, 500) });
+      return res.status(502).json({ error: "Upstream API error", detail: String(e).replace(/^Error: Upstream API error:\s*/, "").slice(0, 500), config_signal: configSignal });
     }
-    return res.status(500).json({ error: "Internal error", detail: String(e).slice(0, 500) });
+    return res.status(500).json({ error: "Internal error", detail: String(e).slice(0, 500), config_signal: configSignal });
   }
 }
