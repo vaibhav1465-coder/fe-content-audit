@@ -200,6 +200,10 @@ function buildArticleUrl(categoryId, selectedMonthValue, perPage, page) {
   return `${WP_BASE}/posts?${params.toString()}`;
 }
 
+function buildLatestFeedUrl(perPage) {
+  return `${WP_BASE}/category/latest/100/${clampArticlesPerPage(perPage)}`;
+}
+
 async function fetchJsonWithMeta(url) {
   const response = await fetch(url);
   const text = await response.text();
@@ -276,7 +280,7 @@ function normalizeArticles(raw, segment) {
       return raw.map((it) => ({
         id: String(it.id), headline: stripHtml(it.title?.rendered), subheading: stripHtml(it.excerpt?.rendered),
         byline: formatByline(it.class_list?.find((item) => item.startsWith("author-"))?.slice(7)), _coauthorIds: it.coauthors || [], publish_date: it.date,
-        body_text: stripHtml(it.content?.rendered), url: it.link, segment,
+        body_text: stripHtml(it.content?.rendered), url: it.link, segment, category_ids: it.categories || [], category_slugs: [],
       }));
     }
     if (Array.isArray(raw?.list?.[0]?.items)) {
@@ -284,10 +288,24 @@ function normalizeArticles(raw, segment) {
         id: String(it.id), headline: it.headline || it.title, subheading: it.introduction,
         byline: (it.byline || []).map((b) => b.name).join(", "), publish_date: it.post_date,
         body_text: it.body_raw || it.body, url: it.post_url, segment,
+        category_ids: (it.categories || []).map((category) => Number(category.id)),
+        category_slugs: (it.categories || []).map((category) => String(category.slug || "")),
       }));
     }
   } catch (e) { return []; }
   return [];
+}
+
+async function fetchLatestFallbackArticles(segmentSlug, categoryId, selectedMonthValue, perPage) {
+  const raw = await fetchWpJson(buildLatestFeedUrl(Math.max(perPage, 100)));
+  const { after, before } = getMonthRange(selectedMonthValue);
+  const filtered = normalizeArticles(raw, segmentSlug).filter((article) => {
+    const published = new Date(String(article.publish_date).replace(" ", "T"));
+    const inDateRange = !Number.isNaN(published.getTime()) && published >= new Date(after) && published < new Date(before);
+    const inSegment = article.category_ids?.includes(Number(categoryId)) || article.category_slugs?.includes(segmentSlug);
+    return inDateRange && inSegment;
+  }).slice(0, clampArticlesPerPage(perPage));
+  return resolveBylines(filtered);
 }
 
 function textContainsAny(text, patterns) {
@@ -512,7 +530,7 @@ function App() {
   const [progress, setProgress] = useState("");
   const [articlesPerPage, setArticlesPerPage] = useState(50);
   const [segmentOffsets, setSegmentOffsets] = useState({});
-  const [analysisMode, setAnalysisMode] = useState("source");
+  const [analysisMode, setAnalysisMode] = useState("fe");
   const [aiProvider, setAiProvider] = useState("anthropic");
   const [aiModel, setAiModel] = useState(AI_PROVIDER_OPTIONS.anthropic[0].value);
   const [costProfile, setCostProfile] = useState("low");
@@ -652,8 +670,29 @@ function App() {
         try { await addArticlesFromRaw(JSON.parse(articlesJson), segmentOffsets[activeSegment] || 0); }
         catch (pasteError) { setLoadMsg(`Could not load articles. ${apiError.message}`); }
       } else {
-        setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: apiError.message } }));
-        setLoadMsg(`Could not load articles for "${activeSegment}". ${apiError.message}`);
+        try {
+          const fallbackArticles = await fetchLatestFallbackArticles(activeSegment, segmentIds[activeSegment], selectedMonth, perPage);
+          if (fallbackArticles.length) {
+            await addArticlesFromRaw({ list: [{ items: fallbackArticles.map((article) => ({
+              id: article.id,
+              headline: article.headline,
+              introduction: article.subheading,
+              byline: article.byline ? article.byline.split(", ").map((name) => ({ name })) : [],
+              post_date: article.publish_date,
+              body_raw: article.body_text,
+              post_url: article.url,
+              categories: [{ id: String(segmentIds[activeSegment]), slug: activeSegment }],
+            })) }] }, segmentOffsets[activeSegment] || 0);
+            setLoadMsg(`Loaded ${fallbackArticles.length} pages for "${activeSegment}" from the FE latest feed.`);
+            return;
+          }
+        } catch (fallbackError) {
+          setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: `${apiError.message}. Fallback also failed: ${fallbackError.message}` } }));
+          setLoadMsg(`Could not load articles for "${activeSegment}". ${fallbackError.message}`);
+          return;
+        }
+        setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "empty", reason: `No pages were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.` } }));
+        setLoadMsg(`No articles were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.`);
       }
     }
   }
@@ -977,7 +1016,7 @@ function App() {
         <div style={st.card}>
           <p className="step-label">Step 3</p>
           <p style={st.stepTitle}>Review before analysis</p>
-          <p style={st.stepDesc}>{totalArticles} articles across {segmentsWithArticles.length} segment(s). Choose exactly which pages should receive recommendations, then decide whether to use source-only review or a paid model.</p>
+          <p style={st.stepDesc}>{totalArticles} articles across {segmentsWithArticles.length} segment(s). Choose exactly which pages should receive recommendations, then decide whether to use the FE API recommendation flow or a quick local screen.</p>
           <div className="toolbar-row" style={{ marginBottom: "12px" }}>
             <label style={{ fontSize: "13px", fontWeight: 700 }}>
               Recommendation count
@@ -1007,9 +1046,9 @@ function App() {
           </div>
           <div style={{ margin: "14px 0", padding: "12px 14px", background: C.lavender, borderRadius: "8px" }}>
             <p style={{ fontSize: "13px", fontWeight: 700, margin: "0 0 8px" }}>Analysis mode:</p>
-            <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={analysisMode === "source"} onChange={() => setAnalysisMode("source")} /> Source-only pre-audit (no Claude cost)</label>
-            <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={analysisMode === "fe"} onChange={() => setAnalysisMode("fe")} /> Claude: FE YMYL/E-E-A-T Guidelines</label>
-            <label style={{ fontSize: "13px" }}><input type="radio" checked={analysisMode === "hcs"} onChange={() => setAnalysisMode("hcs")} /> Claude: Google HCS / Spam Audit</label>
+            <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={analysisMode === "fe"} onChange={() => setAnalysisMode("fe")} /> API: FE YMYL/E-E-A-T Guidelines</label>
+            <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={analysisMode === "hcs"} onChange={() => setAnalysisMode("hcs")} /> API: Google HCS / Spam Audit</label>
+            <label style={{ fontSize: "13px" }}><input type="radio" checked={analysisMode === "source"} onChange={() => setAnalysisMode("source")} /> Quick local screen (no API cost)</label>
           </div>
           {analysisMode !== "source" && (
             <div style={{ marginBottom: "12px" }}>
@@ -1036,7 +1075,7 @@ function App() {
               </label>
             </div>
           )}
-          <p style={st.caption}>{analysisMode === "source" ? `This mode does not call Claude or OpenAI. ${selectedRecommendationArticles.length} selected pages will run in source-only review.` : `Current provider: ${aiProvider === "anthropic" ? "Anthropic" : "OpenAI"}. Selected model: ${aiModel}. Estimated analysis size: about ${(selectedRecommendationArticles.length * ESTIMATED_TOKENS_PER_ARTICLE).toLocaleString()} model tokens before retries for ${selectedRecommendationArticles.length} selected pages.`}</p>
+          <p style={st.caption}>{analysisMode === "source" ? `This mode does not call Claude or OpenAI. ${selectedRecommendationArticles.length} selected pages will run in the quick local screen.` : `Current provider: ${aiProvider === "anthropic" ? "Anthropic" : "OpenAI"}. Selected model: ${aiModel}. Paid API usage depends on page length and the selected model. Use the page selection and lower-cost models to keep spend controlled. Actual usage is shown after results.`}</p>
           <button style={st.btnPrimary} onClick={analyzeAll} disabled={analyzing}>{analyzing ? "Analysing..." : `Run recommendations for ${selectedRecommendationArticles.length} selected pages`}</button>
         </div>
       )}

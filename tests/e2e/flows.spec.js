@@ -63,7 +63,7 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   await page.getByRole("button", { name: /Continue to review/ }).click();
   await expect(page.getByText("Market update")).toBeVisible();
   await expect(page.getByText(/FE Desk/)).toBeVisible();
-  await page.getByLabel("Claude: FE YMYL/E-E-A-T Guidelines").check();
+  await page.getByLabel("API: FE YMYL/E-E-A-T Guidelines").check();
   await page.getByLabel("Higher quality").check();
   await page.getByRole("button", { name: "Run recommendations for 1 selected pages" }).click();
   await expect(page.getByText("Add expert sourcing.")).toBeVisible();
@@ -80,7 +80,7 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
   expect(analysisCalls).toBe(1);
 });
 
-test("source-only pre-audit runs without calling Claude", async ({ page }) => {
+test("quick local screen runs without calling paid APIs", async ({ page }) => {
   let analysisCalls = 0;
   await page.route("**/api/auth", async (route) => {
     await route.fulfill({ json: { token: "test-token", expiresAt: Date.now() + 60_000 } });
@@ -111,7 +111,7 @@ test("source-only pre-audit runs without calling Claude", async ({ page }) => {
   await page.getByRole("button", { name: "Load all segments" }).click();
   await page.getByRole("button", { name: "Load next page" }).click();
   await page.getByRole("button", { name: /Continue to review/ }).click();
-  await expect(page.getByLabel("Source-only pre-audit (no Claude cost)")).toBeChecked();
+  await page.getByLabel("Quick local screen (no API cost)").check();
   await expect(page.getByText("This mode does not call Claude or OpenAI.")).toBeVisible();
   await page.getByRole("button", { name: "Run recommendations for 1 selected pages" }).click();
   await expect(page.getByText("Source-only pre-audit. No Claude tokens used.")).toBeVisible();
@@ -152,7 +152,7 @@ test("OpenAI provider selection sends the chosen model", async ({ page }) => {
   await page.getByRole("button", { name: "Load all segments" }).click();
   await page.getByRole("button", { name: "Load next page" }).click();
   await page.getByRole("button", { name: /Continue to review/ }).click();
-  await page.getByLabel("Claude: FE YMYL/E-E-A-T Guidelines").check();
+  await page.getByLabel("API: FE YMYL/E-E-A-T Guidelines").check();
   await page.getByLabel("OpenAI API").check();
   await page.getByLabel("Higher quality").check();
   await page.getByLabel("AI model").selectOption("gpt-4.1");
