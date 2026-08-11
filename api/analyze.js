@@ -56,8 +56,8 @@ const DAILY_BUDGET_CAP = Number(process.env.DAILY_REQUEST_CAP || 500);
 const PER_MINUTE_LIMIT = Number(process.env.PER_MINUTE_LIMIT_PER_IP || 15);
 const MAX_BODY_TEXT_CHARS = Number(process.env.MAX_BODY_TEXT_CHARS || 8000);
 const MAX_ARTICLE_PAYLOAD_CHARS = Number(process.env.MAX_ARTICLE_PAYLOAD_CHARS || 12000);
-const DEFAULT_STANDARD_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514";
-const DEFAULT_LOW_COST_MODEL = process.env.ANTHROPIC_LOW_COST_MODEL || "claude-3-5-haiku-20241022";
+const DEFAULT_STANDARD_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+const DEFAULT_LOW_COST_MODEL = process.env.ANTHROPIC_LOW_COST_MODEL || "claude-haiku-4-5-20251001";
 const DEFAULT_OPENAI_STANDARD_MODEL = process.env.OPENAI_MODEL || "gpt-5.6-terra";
 const DEFAULT_OPENAI_LOW_COST_MODEL = process.env.OPENAI_LOW_COST_MODEL || "gpt-5.6-luna";
 
@@ -278,7 +278,13 @@ export default async function handler(req, res) {
     return res.status(200).json(parsed);
   } catch (e) {
     if (String(e).startsWith("Error: Upstream API error:")) {
-      return res.status(502).json({ error: "Upstream API error", detail: String(e).replace(/^Error: Upstream API error:\s*/, "").slice(0, 500), config_signal: configSignal });
+      const detail = String(e).replace(/^Error: Upstream API error:\s*/, "").slice(0, 500);
+      const modelUnavailable = config.provider === "anthropic" && /not_found_error/i.test(detail);
+      return res.status(502).json({
+        error: modelUnavailable ? "Configured Anthropic model is not available for this workspace." : "Upstream API error",
+        detail: modelUnavailable ? `The configured Anthropic model (${config.model}) is not available for this workspace.` : detail,
+        config_signal: configSignal,
+      });
     }
     return res.status(500).json({ error: "Internal error", detail: String(e).slice(0, 500), config_signal: configSignal });
   }

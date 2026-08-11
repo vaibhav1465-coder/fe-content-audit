@@ -44,8 +44,8 @@ Check `git status` before committing - `.env` must never appear in the list.
 | Variable | Value | Source |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | `sk-ant-...` | Anthropic Console |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Anthropic standard-review model |
-| `ANTHROPIC_LOW_COST_MODEL` | `claude-3-5-haiku-20241022` | Anthropic lower-cost review model |
+| `ANTHROPIC_MODEL` | `claude-sonnet-5` | Anthropic standard-review model |
+| `ANTHROPIC_LOW_COST_MODEL` | `claude-haiku-4-5-20251001` | Anthropic lower-cost review model |
 | `APP_PASSWORD` | Strong shared password | Your team |
 | `SESSION_SECRET` | Generated random string | Step 2 |
 | `SUPABASE_URL` | `https://xxxxx.supabase.co` | Supabase |
