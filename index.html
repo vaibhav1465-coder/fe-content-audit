@@ -1239,8 +1239,11 @@ function App() {
       {step >= 4 && (
         <div style={st.card}>
           <p className="step-label">Step 4</p>
-          <p style={st.stepTitle}>Content risks by segment</p>
-          {analyzing && <p style={{ fontSize: "14px", color: C.inkMute }}>{progress}</p>}
+          <div className="result-header" style={{ alignItems: "center", gap: "12px", marginBottom: "8px" }}>
+            <p style={st.stepTitle}>Content risks by segment</p>
+            {analyzing && <button style={st.btnOutlineError} onClick={stopAnalysis}>Stop analysis</button>}
+          </div>
+          {analyzing && <p style={{ fontSize: "14px", color: C.inkMute, marginTop: 0 }}>{progress}</p>}
           {analysisNotice && <p style={{ fontSize: "13px", color: C.warn, margin: "0 0 12px", fontWeight: 600 }}>{analysisNotice}</p>}
           {segmentSummary.length > 0 && (
             <div style={{ marginBottom: "16px" }}>
