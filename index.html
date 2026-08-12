@@ -207,6 +207,25 @@ function clampRecommendationLimit(value, total) {
   return Math.max(1, Math.min(total || parsed, parsed));
 }
 
+function toUserMessage(message, fallback = "Something went wrong. Please try again.") {
+  const text = String(message || "").trim();
+  if (!text) return fallback;
+  if (/session expired/i.test(text)) return "Your session expired. Please log in again.";
+  if (/rate limit exceeded/i.test(text)) return "Too many requests were sent in a short time. Please wait a minute and try again.";
+  if (/daily request cap/i.test(text)) return "Today's analysis limit has been reached. Please try again later.";
+  if (/configured anthropic model is not available/i.test(text)) return "The selected Claude model is not available right now. Choose another model and try again.";
+  if (/source api returned unreadable json/i.test(text)) return "This source did not return usable page data for the selected segment or month.";
+  if (/could not parse model output/i.test(text)) return "The selected model returned an unusable response. Please retry.";
+  if (/analysis response was incomplete or not grounded/i.test(text)) return "The analysis could not finish cleanly for this page. Please retry.";
+  if (/upstream api error/i.test(text)) return "The analysis provider is not responding correctly right now. Please retry.";
+  if (/server misconfigured/i.test(text)) return "The analysis service is not fully configured right now.";
+  if (/internal error/i.test(text)) return "The analysis service hit an internal error. Please retry.";
+  if (/missing authorization header|malformed token/i.test(text)) return "Please use this inside the FE Content Audit app after logging in.";
+  if (/http 4\d\d/i.test(text)) return "The requested content could not be loaded for this selection.";
+  if (/http 5\d\d/i.test(text)) return "The content service is temporarily unavailable. Please retry.";
+  return text;
+}
+
 function buildArticleUrl(categoryId, selectedMonthValue, perPage, page) {
   const { after, before } = getMonthRange(selectedMonthValue);
   return buildSourceApiUrl("posts", {
@@ -350,15 +369,15 @@ async function checkSegmentAvailability(segmentSlug, categoryId, selectedMonthVa
       if (fallbackArticles.length > 0) {
         return { type: "ready", reason: "" };
       }
-      return { type: "empty", reason: "No pages were found for this month/year selection." };
+      return { type: "empty", reason: "No pages were found for this month and segment." };
     } catch (fallbackError) {
       const message = /unreadable json/i.test(fallbackError.message)
-        ? "This segment is returning HTML or unreadable JSON for the selected month."
-        : `${apiError.message}. Fallback also failed: ${fallbackError.message}`;
+        ? "This segment did not return usable page data for the selected month."
+        : "This segment could not be loaded from the current source for the selected month.";
       return { type: "unsupported", reason: message };
     }
   }
-  return { type: "empty", reason: "No pages were found for this month/year selection." };
+  return { type: "empty", reason: "No pages were found for this month and segment." };
 }
 
 function textContainsAny(text, patterns) {
@@ -776,7 +795,7 @@ function App() {
     } catch (apiError) {
       if (articlesJson.trim()) {
         try { await addArticlesFromRaw(JSON.parse(articlesJson), segmentOffsets[activeSegment] || 0); }
-        catch (pasteError) { setLoadMsg(`Could not load articles. ${apiError.message}`); }
+        catch (pasteError) { setLoadMsg(toUserMessage(apiError.message, "The selected pages could not be loaded.")); }
       } else {
         try {
           const fallbackArticles = await fetchLatestFallbackArticles(activeSegment, segmentIds[activeSegment], selectedMonth, perPage);
@@ -791,12 +810,12 @@ function App() {
               post_url: article.url,
               categories: [{ id: String(segmentIds[activeSegment]), slug: activeSegment }],
             })) }] }, segmentOffsets[activeSegment] || 0);
-            setLoadMsg(`Loaded ${fallbackArticles.length} pages for "${activeSegment}" from the FE latest feed.`);
+            setLoadMsg(`Loaded ${fallbackArticles.length} pages for "${activeSegment}".`);
             return;
           }
         } catch (fallbackError) {
-          setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: `${apiError.message}. Fallback also failed: ${fallbackError.message}` } }));
-          setLoadMsg(`Could not load articles for "${activeSegment}". ${fallbackError.message}`);
+          setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: "This segment could not be loaded from the current source for the selected month." } }));
+          setLoadMsg(`"${activeSegment}" could not be loaded for the selected month.`);
           return;
         }
         setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "empty", reason: `No pages were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.` } }));
@@ -825,7 +844,7 @@ function App() {
       setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: reachedCap ? "ok" : "end-of-range", reason: reachedCap ? `Paused after ${MAX_AUTO_PAGES_PER_SEGMENT} pages. Load again to continue.` : `Loaded all ${total} available articles for this date range.` } }));
       setLoadMsg(reachedCap ? `Loaded another ${MAX_AUTO_PAGES_PER_SEGMENT} pages for "${activeSegment}". Load again to continue.` : `Loaded all available articles for "${activeSegment}".`);
     } catch (error) {
-      setLoadMsg(`Could not finish loading "${activeSegment}". ${error.message}`);
+      setLoadMsg(toUserMessage(error.message, `Could not finish loading "${activeSegment}". Please try again.`));
     }
     setLoadingArticles(false);
   }
@@ -861,7 +880,7 @@ function App() {
     } catch (error) {
       setLoadingArticles(false);
       setProgress("");
-      setLoadMsg(error.message);
+      setLoadMsg(toUserMessage(error.message, "The imported URLs could not be loaded."));
       return;
     }
 
@@ -961,11 +980,11 @@ function App() {
           overall_health: "Weak",
           findings: [{
             severity: "red",
-            issue_name: "Analysis failed",
-            evidence: isUpstream ? "Paid API request failed" : "Analysis request failed",
-            what_is_wrong: message,
-            why_it_hurts: isUpstream ? "The run should stop before it wastes more paid requests." : "",
-            fix: isUpstream ? "Check the selected provider, model, or API key and retry after fixing the API issue." : "Retry",
+            issue_name: "Analysis could not complete",
+            evidence: isUpstream ? "The analysis provider did not return a usable result." : "This page could not be scored in the current run.",
+            what_is_wrong: toUserMessage(message, "The analysis could not finish for this page."),
+            why_it_hurts: isUpstream ? "The run should stop before more paid requests are used." : "This page was skipped without a final recommendation.",
+            fix: isUpstream ? "Retry after confirming the selected provider and model." : "Retry this page in a new run.",
           }],
           _failed: true,
         };
@@ -1009,11 +1028,11 @@ function App() {
           overall_health: "Weak",
           findings: [{
             severity: "red",
-            issue_name: "Failed again",
-            evidence: isUpstream ? "Paid API request failed" : "Analysis request failed",
-            what_is_wrong: message,
-            why_it_hurts: isUpstream ? "The provider is still failing, so repeated retries are likely to waste more requests." : "",
-            fix: isUpstream ? "Fix the provider issue before retrying this batch." : "Retry",
+            issue_name: "Analysis could not complete",
+            evidence: isUpstream ? "The analysis provider did not return a usable result." : "This page could not be scored in the current run.",
+            what_is_wrong: toUserMessage(message, "The analysis could not finish for this page."),
+            why_it_hurts: isUpstream ? "The provider is still failing, so repeated retries are likely to use more paid requests." : "This page was skipped without a final recommendation.",
+            fix: isUpstream ? "Confirm the selected provider and model before retrying." : "Retry this page in a new run.",
           }],
           _failed: true,
         };
@@ -1099,9 +1118,7 @@ function App() {
       <div style={st.card}>
         <p className="step-label">Step 1</p>
         <p style={st.stepTitle}>Load segments</p>
-        <p style={st.stepDesc}>Load all active FE segments from the preprod WordPress source. Paste raw category JSON only if automatic loading is temporarily unavailable.</p>
-        <a href="https://preprod.financialexpress.com/wp-json/wp/v2/categories?per_page=100" target="_blank" rel="noopener noreferrer" style={st.link}>https://preprod.financialexpress.com/wp-json/wp/v2/categories?per_page=100</a>
-        <textarea style={{ minHeight: "80px", marginTop: "10px" }} value={categoriesJson} onChange={(e) => setCategoriesJson(e.target.value)} placeholder="Optional fallback: paste the complete segment JSON here" />
+        <p style={st.stepDesc}>Load all active FE segments from the preprod WordPress source. The product handles the source request automatically after login.</p>
         <div style={{ marginTop: "12px" }}><button style={st.btnPrimary} onClick={loadSegments}>Load all segments</button></div>
         {segments.length > 0 && <p style={{ fontSize: "13px", color: C.success, marginTop: "10px", fontWeight: 700 }}>Loaded {segments.length} active segments.</p>}
         {loadMsg && step === 1 && <p style={{ fontSize: "13px", color: C.error, marginTop: "8px" }}>{loadMsg}</p>}
@@ -1157,10 +1174,7 @@ function App() {
           {activeSegment && (
             <React.Fragment>
               <p style={st.caption}>Next page: {Math.floor((segmentOffsets[activeSegment] || 0) / clampArticlesPerPage(articlesPerPage)) + 1}. Each page loads up to {clampArticlesPerPage(articlesPerPage)} articles from {monthOptions.find((option) => option.value === selectedMonth)?.label}.</p>
-              <a href={buildArticleUrl(segmentIds[activeSegment], selectedMonth, articlesPerPage, Math.floor((segmentOffsets[activeSegment] || 0) / clampArticlesPerPage(articlesPerPage)) + 1)} target="_blank" rel="noopener noreferrer" style={{ ...st.link, marginBottom: "10px" }}>
-                {`Open the preprod article feed for ${activeSegment} - ${monthOptions.find((option) => option.value === selectedMonth)?.label}`}
-              </a>
-              <textarea style={{ minHeight: "80px" }} value={articlesJson} onChange={(e) => setArticlesJson(e.target.value)} placeholder="Optional fallback: paste the complete article JSON here" />
+              <p style={{ ...st.caption, marginBottom: "10px" }}>Source: preprod WordPress. Page data is loaded automatically inside the app after login.</p>
               <div style={{ marginTop: "10px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
                 <button style={st.btnPrimary} onClick={loadArticlesForSegment} disabled={loadingArticles || checkingSegments}>Load next page</button>
                 <button style={st.btnOutline} onClick={loadAllPagesForSegment} disabled={loadingArticles || checkingSegments}>Load all available pages</button>
@@ -1184,7 +1198,7 @@ function App() {
           </div>
           {unsupportedSegments.length > 0 && (
             <div style={{ marginTop: "14px", borderTop: `1px solid ${C.hairline}`, paddingTop: "12px" }}>
-              <p style={{ fontSize: "13px", fontWeight: 700, color: C.error, margin: "0 0 6px" }}>Segments unavailable through this API:</p>
+              <p style={{ fontSize: "13px", fontWeight: 700, color: C.error, margin: "0 0 6px" }}>Segments that could not be loaded for this month:</p>
               {unsupportedSegments.map(([sg, v]) => <p key={sg} style={{ fontSize: "12px", color: C.error, margin: "0 0 4px" }}><strong>{sg}</strong>: {v.reason}</p>)}
             </div>
           )}
