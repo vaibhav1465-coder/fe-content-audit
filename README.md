@@ -6,6 +6,7 @@
 - `build.js` - compiles the interface JSX for production
 - `api/auth.js` - authenticates users and issues session tokens
 - `api/analyze.js` - runs authenticated, Supabase-rate-limited analyses
+- `api/source.js` - proxies authenticated requests to the preprod WordPress source
 - `api/_verifyToken.js` - verifies session tokens
 - `supabase_setup.sql` - creates the Supabase rate-limit tables
 
@@ -46,6 +47,8 @@ Check `git status` before committing - `.env` must never appear in the list.
 | `ANTHROPIC_API_KEY` | `sk-ant-...` | Anthropic Console |
 | `ANTHROPIC_MODEL` | `claude-sonnet-5` | Anthropic standard-review model |
 | `ANTHROPIC_LOW_COST_MODEL` | `claude-haiku-4-5-20251001` | Anthropic lower-cost review model |
+| `PREPROD_WP_BASE` | `https://preprod.financialexpress.com/wp-json/wp/v2` | Preprod WordPress REST base |
+| `PREPROD_COAUTHORS_BASE` | `https://preprod.financialexpress.com/wp-json/coauthors/v1` | Preprod coauthors endpoint |
 | `APP_PASSWORD` | Strong shared password | Your team |
 | `SESSION_SECRET` | Generated random string | Step 2 |
 | `SUPABASE_URL` | `https://xxxxx.supabase.co` | Supabase |
@@ -80,7 +83,7 @@ Paste or upload FE URL lists in Step 2 using plain text, CSV, TSV, or Google She
 
 - Saved analyses use browser `localStorage` - storage is per browser, not shared across devices or team members.
 - The article picker defaults to the last 12 months and also offers each elapsed month in the current and previous calendar year.
-- The frontend fetches all active FE categories across WordPress pagination, then loads article pages directly using category IDs and exact date boundaries.
+- The frontend now loads categories and month-filtered posts from the preprod WordPress source through an authenticated backend proxy, then uses those category IDs and exact date boundaries for retrieval.
 - FE WordPress caps each article API page at 100 records. Use **Load all available pages** to collect larger batches in controlled chunks.
 - Large Claude analysis runs are paced below the configured per-minute rate limit.
 - Recommendations are displayed only when each finding contains evidence found in the submitted article and one to three concrete optimisation steps.

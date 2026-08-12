@@ -6,7 +6,7 @@
   "description": "FE Content Audit - YMYL/E-E-A-T and Google HCS content auditing tool",
   "scripts": {
     "build": "node build.js",
-    "check": "node --check build.js && node --check api/_verifyToken.js && node --check api/auth.js && node --check api/analyze.js",
+    "check": "node --check build.js && node --check api/_verifyToken.js && node --check api/auth.js && node --check api/analyze.js && node --check api/source.js",
     "test": "node --test tests/*.test.js",
     "test:e2e": "playwright test"
   },
