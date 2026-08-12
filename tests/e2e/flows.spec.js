@@ -28,7 +28,7 @@ test("authentication, segment loading, article loading, saved analyses, CSV expo
     expect(route.request().postDataJSON().article.byline).toBe("FE Desk");
     expect(route.request().postDataJSON().cost_profile).toBe("standard");
     expect(route.request().postDataJSON().ai_provider).toBe("anthropic");
-    expect(route.request().postDataJSON().ai_model).toBe("claude-sonnet-4-20250514");
+    expect(route.request().postDataJSON().ai_model).toBe("claude-sonnet-5");
     await route.fulfill({ json: { overall_health: "Needs Work", findings: [{ severity: "yellow", issue_name: "Sourcing", evidence: "Article body", what_is_wrong: "The article cites no expert.", why_it_hurts: "The claim lacks authority.", fix: "Add a qualified source.", optimization_steps: ["Identify the main claim.", "Ask a qualified expert to explain it."], expected_improvement: "This will make the article more authoritative and useful." }], bottom_line: "Add expert sourcing.", ymyl_score: 3, experience: 3, expertise: 2, authoritativeness: 2, trustworthiness: 3 } });
   });
   await page.route("**/wp-json/wp/v2/coauthors?**", async (route) => {

@@ -76,7 +76,7 @@ const SESSION_EXPIRY_KEY = "fe_session_expires";
 const MEMORY_KEY = "fe_saved_analyses";
 const ANALYSIS_INTERVAL_MS = 4200;
 const WP_BASE = "https://www.financialexpress.com/wp-json/wp/v2";
-const MAX_ARTICLES_PER_REQUEST = 100;
+const MAX_ARTICLES_PER_REQUEST = 500;
 const MAX_AUTO_PAGES_PER_SEGMENT = 20;
 const MAX_ANALYSIS_ARTICLES = 500;
 const BODY_TEXT_LIMIT = 8000;
@@ -84,6 +84,53 @@ const SOURCE_AUDIT_LIMIT = 5000;
 const RECOMMENDATION_COUNT_OPTIONS = [50, 100, 150, 200, 250, 300, 350, 400, 450, 500];
 const SEGMENT_SCAN_CONCURRENCY = 8;
 const MAX_CONSECUTIVE_UPSTREAM_ERRORS = 3;
+const FE_SEGMENT_ENDPOINTS = {
+  "income-tax": `${WP_BASE}/category/income-tax/0/10`,
+  opinion: `${WP_BASE}/category/opinion/0/10`,
+  cafeinvest: `${WP_BASE}/category/cafeinvest/0/10`,
+  market: `${WP_BASE}/category/market/0/10`,
+  commodities: `${WP_BASE}/category/commodities/0/10`,
+  "ipo-news": `${WP_BASE}/category/ipo-news/0/10`,
+  economy: `${WP_BASE}/category/economy/0/10`,
+  technology: `${WP_BASE}/category/technology/0/10`,
+  "mutual-funds": `${WP_BASE}/category/mutual-funds/0/10`,
+  entertainment: `${WP_BASE}/category/entertainment/0/10`,
+  healthcare: `${WP_BASE}/category/healthcare/0/10`,
+  industry: `${WP_BASE}/category/industry/0/10`,
+  "banking-finance": `${WP_BASE}/category/banking-finance/0/10`,
+  sme: `${WP_BASE}/category/sme/0/10`,
+  insurance: `${WP_BASE}/category/insurance/0/10`,
+  "jobs-career": `${WP_BASE}/category/jobs-career/0/10`,
+  education: `${WP_BASE}/category/education/0/10`,
+  money: `${WP_BASE}/category/money/0/10`,
+  sponsored: `${WP_BASE}/category/sponsored/0/10`,
+  infrastructure: `${WP_BASE}/category/infrastructure/0/10`,
+  railways: `${WP_BASE}/category/railways/0/10`,
+  "airlines-aviation": `${WP_BASE}/category/airlines-aviation/0/10`,
+  roadways: `${WP_BASE}/category/roadways/0/10`,
+  "india-news": `${WP_BASE}/category/india-news/0/10`,
+  sports: `${WP_BASE}/category/sports/0/10`,
+  lifestyle: `${WP_BASE}/category/lifestyle/0/10`,
+  "travel-tourism": `${WP_BASE}/category/travel-tourism/0/10`,
+  health: `${WP_BASE}/category/health/0/10`,
+  science: `${WP_BASE}/category/science/0/10`,
+  defence: `${WP_BASE}/category/defence/0/10`,
+  "stock-insights": `${WP_BASE}/category/stock-insights/0/10`,
+  insights: `${WP_BASE}/category/insights/0/10`,
+  "gold-pulse": `${WP_BASE}/category/gold-pulse/0/10`,
+  "us-news": `${WP_BASE}/category/us-news/0/10`,
+  cryptocurrency: `${WP_BASE}/category/cryptocurrency/0/10`,
+  "auto-news": `${WP_BASE}/category/auto-news/0/10`,
+  "technology-news": `${WP_BASE}/category/technology-news/0/10`,
+  "investment-saving-news": `${WP_BASE}/category/investment-saving-news/0/10`,
+  "sports-news": `${WP_BASE}/category/sports-news/0/10`,
+  "career-news": `${WP_BASE}/category/career-news/0/10`,
+  budget: `${WP_BASE}/category/budget/0/10`,
+  latest: `${WP_BASE}/category/latest/0/10`,
+  "international-news": `${WP_BASE}/category/international-news/0/10`,
+  "business-news": `${WP_BASE}/category/business-news/0/10`,
+  "investing-abroad": `https://www.financialexpress.com/business/investing-abroad/?webview=true`,
+};
 const AI_PROVIDER_OPTIONS = {
   anthropic: [
     { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 - lower cost" },
@@ -204,6 +251,15 @@ function buildArticleUrl(categoryId, selectedMonthValue, perPage, page) {
   return `${WP_BASE}/posts?${params.toString()}`;
 }
 
+function buildSegmentFeedUrl(segmentSlug, offset, count) {
+  const template = FE_SEGMENT_ENDPOINTS[segmentSlug];
+  if (!template) return "";
+  if (/\/0\/10\/?$/.test(template)) {
+    return template.replace(/\/0\/10\/?$/, `/${Math.max(0, Number(offset) || 0)}/${clampArticlesPerPage(count)}`);
+  }
+  return template;
+}
+
 function buildLatestFeedUrl(perPage) {
   return `${WP_BASE}/category/latest/100/${clampArticlesPerPage(perPage)}`;
 }
@@ -312,8 +368,24 @@ async function fetchLatestFallbackArticles(segmentSlug, categoryId, selectedMont
   return resolveBylines(filtered);
 }
 
+async function fetchSegmentFeedArticles(segmentSlug, selectedMonthValue, perPage, offset = 0) {
+  const url = buildSegmentFeedUrl(segmentSlug, offset, perPage);
+  if (!url) throw new Error("No FE full JSON URL is configured for this segment.");
+  const raw = await fetchWpJson(url);
+  const { after, before } = getMonthRange(selectedMonthValue);
+  const filtered = normalizeArticles(raw, segmentSlug).filter((article) => {
+    const published = new Date(String(article.publish_date).replace(" ", "T"));
+    return !Number.isNaN(published.getTime()) && published >= new Date(after) && published < new Date(before);
+  });
+  return resolveBylines(filtered);
+}
+
 async function checkSegmentAvailability(segmentSlug, categoryId, selectedMonthValue) {
   try {
+    if (FE_SEGMENT_ENDPOINTS[segmentSlug]) {
+      const feedArticles = await fetchSegmentFeedArticles(segmentSlug, selectedMonthValue, 100, 0);
+      if (feedArticles.length > 0) return { type: "ready", reason: "" };
+    }
     const result = await fetchJsonWithMeta(buildArticleUrl(categoryId, selectedMonthValue, 1, 1));
     if (Array.isArray(result.data) && result.data.length > 0) {
       return { type: "ready", reason: "" };
@@ -580,6 +652,7 @@ function App() {
   const [selectedMonth, setSelectedMonth] = useState(monthOptions[0].value);
   const [analysisNotice, setAnalysisNotice] = useState("");
   const stopAnalysisRef = useRef(false);
+  const activeSegmentFeedUrl = activeSegment ? buildSegmentFeedUrl(activeSegment, segmentOffsets[activeSegment] || 0, articlesPerPage) : "";
 
   async function scanSegmentAvailability(currentSegments, currentSegmentIds, monthValue, existingArticles = {}) {
     if (!currentSegments.length) return {};
@@ -742,11 +815,32 @@ function App() {
   async function loadArticlesForSegment() {
     if (!activeSegment || !segmentIds[activeSegment]) { setLoadMsg("Select a segment first."); return; }
     const perPage = clampArticlesPerPage(articlesPerPage);
-    const page = Math.floor((segmentOffsets[activeSegment] || 0) / perPage) + 1;
+    const currentOffset = segmentOffsets[activeSegment] || 0;
+    const page = Math.floor(currentOffset / perPage) + 1;
     setLoadMsg(`Loading page ${page} for "${activeSegment}"...`);
     try {
+      if (FE_SEGMENT_ENDPOINTS[activeSegment]) {
+        const feedArticles = await fetchSegmentFeedArticles(activeSegment, selectedMonth, perPage, currentOffset);
+        if (!feedArticles.length) {
+          setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "empty", reason: `No pages were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.` } }));
+          setLoadMsg(`No articles were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.`);
+          return;
+        }
+        await addArticlesFromRaw({ list: [{ items: feedArticles.map((article) => ({
+          id: article.id,
+          headline: article.headline,
+          introduction: article.subheading,
+          byline: article.byline ? article.byline.split(", ").map((name) => ({ name })) : [],
+          post_date: article.publish_date,
+          body_raw: article.body_text,
+          post_url: article.url,
+          categories: [{ id: String(segmentIds[activeSegment]), slug: activeSegment }],
+        })) }] }, currentOffset);
+        setLoadMsg(`Loaded ${feedArticles.length} pages for "${activeSegment}" from the FE full JSON feed.`);
+        return;
+      }
       const result = await fetchJsonWithMeta(buildArticleUrl(segmentIds[activeSegment], selectedMonth, perPage, page));
-      await addArticlesFromRaw(result.data, segmentOffsets[activeSegment] || 0);
+      await addArticlesFromRaw(result.data, currentOffset);
       if (page >= result.totalPages) {
         setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "end-of-range", reason: `Loaded all ${result.total} available articles for this date range.` } }));
       }
@@ -788,6 +882,35 @@ function App() {
     const startPage = Math.floor((segmentOffsets[activeSegment] || 0) / perPage) + 1;
     setLoadingArticles(true);
     try {
+      if (FE_SEGMENT_ENDPOINTS[activeSegment]) {
+        let loadedAny = false;
+        for (let page = startPage; page < startPage + MAX_AUTO_PAGES_PER_SEGMENT; page++) {
+          const offset = (page - 1) * perPage;
+          setLoadMsg(`Loading ${activeSegment}, page ${page}...`);
+          const feedArticles = await fetchSegmentFeedArticles(activeSegment, selectedMonth, perPage, offset);
+          if (!feedArticles.length) break;
+          loadedAny = true;
+          await addArticlesFromRaw({ list: [{ items: feedArticles.map((article) => ({
+            id: article.id,
+            headline: article.headline,
+            introduction: article.subheading,
+            byline: article.byline ? article.byline.split(", ").map((name) => ({ name })) : [],
+            post_date: article.publish_date,
+            body_raw: article.body_text,
+            post_url: article.url,
+            categories: [{ id: String(segmentIds[activeSegment]), slug: activeSegment }],
+          })) }] }, offset);
+          if (feedArticles.length < perPage) break;
+        }
+        if (!loadedAny) {
+          setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "empty", reason: `No pages were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.` } }));
+          setLoadMsg(`No articles were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.`);
+        } else {
+          setLoadMsg(`Loaded available FE full JSON pages for "${activeSegment}".`);
+        }
+        setLoadingArticles(false);
+        return;
+      }
       let total = 0;
       let totalPages = startPage;
       for (let page = startPage; page <= totalPages && page < startPage + MAX_AUTO_PAGES_PER_SEGMENT; page++) {
@@ -868,9 +991,10 @@ function App() {
     const firstSegment = Object.keys(grouped)[0];
     if (firstSegment) setActiveSegment(firstSegment);
     setStep(3);
-    setLoadMsg(`Imported ${imported.length} FE article URLs from ${importFileName || "the pasted list"}.`);
+    setLoadMsg(`Imported ${imported.length} FE article URLs from ${importFileName || "the pasted list"}. They are ready to run in Step 3.`);
     setProgress("");
     setLoadingArticles(false);
+    window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
   }
 
   const totalArticles = Object.values(segmentArticles).flat().length;
@@ -1127,8 +1251,8 @@ function App() {
           {activeSegment && (
             <React.Fragment>
               <p style={st.caption}>Next page: {Math.floor((segmentOffsets[activeSegment] || 0) / clampArticlesPerPage(articlesPerPage)) + 1}. Each page loads up to {clampArticlesPerPage(articlesPerPage)} articles from {monthOptions.find((option) => option.value === selectedMonth)?.label}.</p>
-              <a href={buildArticleUrl(segmentIds[activeSegment], selectedMonth, articlesPerPage, Math.floor((segmentOffsets[activeSegment] || 0) / clampArticlesPerPage(articlesPerPage)) + 1)} target="_blank" rel="noopener noreferrer" style={{ ...st.link, marginBottom: "10px" }}>
-                Open the FE article page for {activeSegment} - {monthOptions.find((option) => option.value === selectedMonth)?.label}
+              <a href={activeSegmentFeedUrl || buildArticleUrl(segmentIds[activeSegment], selectedMonth, articlesPerPage, Math.floor((segmentOffsets[activeSegment] || 0) / clampArticlesPerPage(articlesPerPage)) + 1)} target="_blank" rel="noopener noreferrer" style={{ ...st.link, marginBottom: "10px" }}>
+                {activeSegmentFeedUrl ? `Open the FE full JSON feed for ${activeSegment}` : `Open the FE article page for ${activeSegment} - ${monthOptions.find((option) => option.value === selectedMonth)?.label}`}
               </a>
               <textarea style={{ minHeight: "80px" }} value={articlesJson} onChange={(e) => setArticlesJson(e.target.value)} placeholder="Optional fallback: paste the complete article JSON here" />
               <div style={{ marginTop: "10px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
