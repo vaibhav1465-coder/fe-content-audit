@@ -6,38 +6,59 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; background: #f6f3ef; font-family: 'Inter', system-ui, sans-serif; color: #1d1d1d; }
+  body { margin: 0; background: #050509; font-family: 'Inter', system-ui, sans-serif; color: #f4f6fb; }
   #root { max-width: 980px; margin: 0 auto; padding: 32px 20px 80px; }
-  .login-shell { min-height: 100vh; display: grid; place-items: center; padding: 28px 16px; }
-  .login-wrap { width: 100%; max-width: 430px; background: #ffffff; border: 1px solid #e7e1dc; border-radius: 14px; padding: 32px; box-shadow: 0 18px 48px rgba(29, 29, 29, 0.08); }
-  .login-kicker { margin: 0 0 10px; color: #6b5c67; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  .login-shell { min-height: 100vh; display: grid; place-items: center; padding: 28px 16px; background: radial-gradient(circle at top right, rgba(73,57,209,0.22), transparent 28%), radial-gradient(circle at left center, rgba(109,136,131,0.18), transparent 25%), #050509; }
+  .login-wrap { width: 100%; max-width: 500px; background: rgba(14, 16, 23, 0.92); border: 1px solid rgba(194, 196, 206, 0.14); border-radius: 22px; padding: 34px; box-shadow: 0 28px 80px rgba(0, 0, 0, 0.38); }
+  .login-kicker { margin: 0 0 10px; color: #8ea0ac; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
   .dashboard-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 18px 0 16px; }
-  .metric-card { background: #ffffff; border: 1px solid #e7e1dc; border-radius: 10px; padding: 14px 16px; }
-  .metric-label { margin: 0 0 6px; color: #696969; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
-  .metric-value { margin: 0; color: #1d1d1d; font-size: 24px; line-height: 1.15; font-weight: 700; }
+  .metric-card { background: #10131a; border: 1px solid rgba(194, 196, 206, 0.12); border-radius: 16px; padding: 16px 18px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.02); }
+  .metric-label { margin: 0 0 8px; color: #8ea0ac; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+  .metric-value { margin: 0; color: #f7f9fc; font-size: 26px; line-height: 1.15; font-weight: 700; }
+  .summary-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .hero-panel, .panel, .table-panel { background: #10131a; border: 1px solid rgba(194, 196, 206, 0.12); border-radius: 18px; }
+  .hero-panel { padding: 24px; min-height: 220px; position: relative; overflow: hidden; }
+  .hero-panel:before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at top right, rgba(73,57,209,0.28), transparent 32%), radial-gradient(circle at bottom left, rgba(109,136,131,0.2), transparent 28%); pointer-events: none; }
+  .hero-inner { position: relative; z-index: 1; }
+  .mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .mini-card { background: rgba(255,255,255,0.02); border: 1px solid rgba(194, 196, 206, 0.09); border-radius: 14px; padding: 14px; }
+  .bar-track { height: 8px; border-radius: 999px; background: rgba(255,255,255,0.06); overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #4939D1, #6D8883); }
+  .insight-list { display: grid; gap: 10px; margin-top: 12px; }
+  .insight-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13px; color: #c2c4ce; }
   .toolbar-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .step-label { margin: 0 0 8px; color: #4a154b; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+  .step-label { margin: 0 0 8px; color: #8ea0ac; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
   input[type=text], input[type=number], input[type=password], textarea {
-    border: 1px solid #ded8d3; border-radius: 8px; padding: 11px 12px; font-family: inherit; font-size: 14px; color: #1d1d1d; background: #ffffff;
+    border: 1px solid rgba(194, 196, 206, 0.16); border-radius: 12px; padding: 11px 12px; font-family: inherit; font-size: 14px; color: #f7f9fc; background: #0c0f15;
   }
-  input:focus, textarea:focus, select:focus { outline: 2px solid rgba(74, 21, 75, 0.16); border-color: #4a154b; }
-  select { border: 1px solid #ded8d3; border-radius: 8px; padding: 11px 12px; font-family: inherit; font-size: 14px; color: #1d1d1d; background: #ffffff; }
+  input:focus, textarea:focus, select:focus { outline: 2px solid rgba(73, 57, 209, 0.22); border-color: #4939D1; }
+  select { border: 1px solid rgba(194, 196, 206, 0.16); border-radius: 12px; padding: 11px 12px; font-family: inherit; font-size: 14px; color: #f7f9fc; background: #0c0f15; }
   textarea { width: 100%; font-family: monospace; font-size: 12px; }
   button { font-family: inherit; }
   .page-header, .saved-row, .result-header { display: flex; justify-content: space-between; }
   .saved-actions { display: flex; gap: 6px; }
+  .article-table { border: 1px solid rgba(194, 196, 206, 0.12); border-radius: 14px; overflow: hidden; background: #0c0f15; }
+  .article-table-header { display: grid; grid-template-columns: 48px 1.8fr .9fr .8fr; gap: 12px; padding: 12px 14px; color: #8ea0ac; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; border-bottom: 1px solid rgba(194, 196, 206, 0.08); }
+  .article-table-row { display: grid; grid-template-columns: 48px 1.8fr .9fr .8fr; gap: 12px; padding: 12px 14px; border-bottom: 1px solid rgba(194, 196, 206, 0.06); align-items: start; }
+  .article-table-row:last-child { border-bottom: none; }
+  .status-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .section-divider { height: 1px; background: rgba(194, 196, 206, 0.1); margin: 16px 0; }
   @media (max-width: 640px) {
     #root { padding: 20px 12px 48px; }
     .login-wrap { padding: 24px; }
     .dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .summary-grid, .mini-grid { grid-template-columns: 1fr; }
     .page-header, .saved-row, .result-header { flex-direction: column; align-items: stretch !important; gap: 12px; }
     .saved-actions { flex-wrap: wrap; }
     .saved-actions button { flex: 1; }
     input, select, textarea { max-width: 100%; }
+    .article-table-header { display: none; }
+    .article-table-row { grid-template-columns: 34px 1fr; }
   }
 </style>
 </head>
@@ -47,27 +68,27 @@
 const { useRef, useState } = React;
 
 const C = {
-  primary: "#4a154b", onPrimary: "#ffffff", ink: "#1d1d1d", inkMute: "#696969",
-  linkBlue: "#1264a3", canvas: "#ffffff", cream: "#f4ede4", lavender: "#f9f0ff",
-  hairline: "#e6e6e6", error: "#cc4117", success: "#007a5a",
-  errorTint: "#fbe9e3", successTint: "#e3f2ec", warnTint: "#fdf3e3", warn: "#a9660a",
+  primary: "#4939D1", onPrimary: "#ffffff", ink: "#f4f6fb", inkMute: "#8ea0ac",
+  linkBlue: "#7eb5ff", canvas: "#10131a", cream: "#0c0f15", lavender: "#171b26",
+  hairline: "rgba(194, 196, 206, 0.12)", error: "#E42B1D", success: "#6D8883",
+  errorTint: "rgba(228, 43, 29, 0.12)", successTint: "rgba(109, 136, 131, 0.14)", warnTint: "rgba(255, 184, 77, 0.12)", warn: "#ffb84d",
 };
 
 const st = {
-  h1: { fontSize: "32px", fontWeight: 700, color: C.primary, margin: "0 0 4px" },
+  h1: { fontSize: "34px", fontWeight: 700, color: C.ink, margin: "0 0 4px" },
   subtitle: { fontSize: "16px", color: C.inkMute, margin: "0 0 20px", lineHeight: 1.55 },
-  card: { background: C.canvas, border: "1px solid #e7e1dc", borderRadius: "12px", padding: "24px", marginBottom: "16px", boxShadow: "0 8px 26px rgba(29, 29, 29, 0.035)" },
-  cardLavender: { background: "#fbf7fd", border: "1px solid #eadff0", borderRadius: "12px", padding: "24px", marginBottom: "16px" },
+  card: { background: C.canvas, border: `1px solid ${C.hairline}`, borderRadius: "18px", padding: "24px", marginBottom: "16px", boxShadow: "0 18px 40px rgba(0, 0, 0, 0.22)" },
+  cardLavender: { background: C.lavender, border: `1px solid ${C.hairline}`, borderRadius: "18px", padding: "24px", marginBottom: "16px" },
   stepTitle: { fontSize: "21px", fontWeight: 700, margin: "0 0 4px" },
   stepDesc: { fontSize: "14px", color: C.inkMute, margin: "0 0 14px", lineHeight: 1.5 },
-  btnPrimary: { background: C.primary, color: C.onPrimary, border: "none", borderRadius: "10px", padding: "13px 24px", fontSize: "15px", fontWeight: 700, cursor: "pointer" },
-  btnOutline: { background: C.canvas, color: C.primary, border: `1px solid ${C.primary}`, borderRadius: "10px", padding: "10px 18px", fontSize: "14px", fontWeight: 700, cursor: "pointer" },
-  btnOutlineError: { background: C.canvas, color: C.error, border: `1px solid ${C.error}`, borderRadius: "10px", padding: "10px 18px", fontSize: "14px", fontWeight: 700, cursor: "pointer" },
+  btnPrimary: { background: C.primary, color: C.onPrimary, border: "none", borderRadius: "12px", padding: "13px 24px", fontSize: "15px", fontWeight: 700, cursor: "pointer", boxShadow: "0 12px 28px rgba(73, 57, 209, 0.28)" },
+  btnOutline: { background: "#0c0f15", color: C.ink, border: `1px solid ${C.hairline}`, borderRadius: "12px", padding: "10px 18px", fontSize: "14px", fontWeight: 700, cursor: "pointer" },
+  btnOutlineError: { background: "#0c0f15", color: C.error, border: `1px solid rgba(228, 43, 29, 0.36)`, borderRadius: "12px", padding: "10px 18px", fontSize: "14px", fontWeight: 700, cursor: "pointer" },
   link: { color: C.linkBlue, textDecoration: "underline", fontSize: "13px", fontFamily: "monospace", wordBreak: "break-all", display: "block" },
-  pillTag: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "10px", background: C.lavender, color: C.primary, border: "1px solid transparent", cursor: "pointer" },
+  pillTag: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "999px", background: "rgba(255,255,255,0.04)", color: C.ink, border: `1px solid ${C.hairline}`, cursor: "pointer" },
   pillTagActive: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "10px", background: C.primary, color: C.onPrimary, border: "1px solid transparent", cursor: "pointer" },
-  pillTagBad: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "10px", background: C.errorTint, color: C.error, border: "1px solid transparent", cursor: "pointer" },
-  pillTagWarn: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "10px", background: C.warnTint, color: C.warn, border: "1px solid transparent", cursor: "pointer" },
+  pillTagBad: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "999px", background: C.errorTint, color: "#ff8d82", border: "1px solid transparent", cursor: "pointer" },
+  pillTagWarn: { fontSize: "12px", fontWeight: 700, padding: "7px 14px", borderRadius: "999px", background: C.warnTint, color: C.warn, border: "1px solid transparent", cursor: "pointer" },
   caption: { fontSize: "12px", color: C.inkMute },
 };
 
@@ -477,6 +498,60 @@ function buildSourceOnlyResult(article) {
   };
 }
 
+function buildClientFallbackResult(article, mode, message, aiProvider, aiModel, costProfile) {
+  const base = buildSourceOnlyResult(article);
+  const reviewNote = toUserMessage(message, "The selected model did not return a usable recommendation for this page, so the product used its built-in review rules.");
+  const topFinding = base.findings?.[0];
+
+  if (mode === "hcs") {
+    return {
+      verdict: base.overall_health === "Strong" ? "Healthy" : base.overall_health === "Needs Work" ? "Borderline" : "Dead Weight",
+      information_gain_score: Math.max(2, Math.min(5, Math.round((base.word_count || 250) >= 700 ? 4 : (base.word_count || 250) >= 400 ? 3 : 2))),
+      experience_score: Math.max(2, Math.min(5, base.experience || 2)),
+      trust_score: Math.max(2, Math.min(5, base.trustworthiness || 2)),
+      spam_risk: (base.word_count || 0) < 350 ? "thin-content" : "none",
+      findings: (base.findings || []).map((finding, index) => index === 0 ? {
+        ...finding,
+        what_is_wrong: reviewNote,
+      } : finding),
+      bottom_line: topFinding ? "This page still needs manual review before any SEO or editorial action is finalised." : reviewNote,
+      _fallback: true,
+      _client_fallback: true,
+      _fallback_reason: reviewNote,
+      _provider: aiProvider,
+      _model: aiModel,
+      _cost_profile: costProfile,
+      _usage: { input_tokens: 0, output_tokens: 0 },
+    };
+  }
+
+  return {
+    ...base,
+    findings: (base.findings || []).map((finding, index) => index === 0 ? {
+      ...finding,
+      what_is_wrong: reviewNote,
+    } : finding),
+    bottom_line: topFinding ? "This page still needs manual review before any SEO or editorial action is finalised." : reviewNote,
+    flagged_guidelines: ["G1", "G2", "G3"],
+    _fallback: true,
+    _client_fallback: true,
+    _fallback_reason: reviewNote,
+    _provider: aiProvider,
+    _model: aiModel,
+    _cost_profile: costProfile,
+    _usage: { input_tokens: 0, output_tokens: 0 },
+  };
+}
+
+function getStatusCounts(statusMap) {
+  const values = Object.values(statusMap || {});
+  return {
+    ready: values.filter((entry) => entry.type === "ok" || entry.type === "idle" || entry.type === "end-of-range").length,
+    empty: values.filter((entry) => entry.type === "empty").length,
+    unsupported: values.filter((entry) => entry.type === "unsupported").length,
+  };
+}
+
 function extractUrlFromRow(parts) {
   return parts.find((part) => /^https?:\/\//i.test(String(part || "").trim())) || "";
 }
@@ -572,9 +647,19 @@ function LoginScreen({ onSuccess }) {
   return (
     <div className="login-shell">
     <div className="login-wrap">
-      <p className="login-kicker">Internal content operations</p>
+      <p className="login-kicker">SEO workflow</p>
       <h1 style={{ ...st.h1, marginBottom: "8px" }}>FE Content Audit</h1>
-      <p style={{ ...st.subtitle, marginBottom: "24px" }}>Sign in to load FE segments, run scalable pre-audits, and review pages selected for deeper analysis.</p>
+      <p style={{ ...st.subtitle, marginBottom: "10px" }}>Built for SEO-first content reviews, with editorial follow-up kept simple and action-led.</p>
+      <div className="mini-grid" style={{ marginBottom: "24px" }}>
+        <div className="mini-card">
+          <p className="metric-label">Primary use</p>
+          <p style={{ margin: 0, fontSize: "14px", lineHeight: 1.5, color: C.ink }}>Find pages that need content improvements, stronger proof, and cleaner optimization follow-up.</p>
+        </div>
+        <div className="mini-card">
+          <p className="metric-label">What you get</p>
+          <p style={{ margin: 0, fontSize: "14px", lineHeight: 1.5, color: C.ink }}>Segment loading, month filtering, URL imports, and recommendation cards that are easier to trust and review.</p>
+        </div>
+      </div>
       <form onSubmit={handleSubmit}>
         <label style={{ display: "block", textAlign: "left", fontSize: "13px", fontWeight: 700, marginBottom: "8px" }}>Team password</label>
         <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus style={{ width: "100%", marginBottom: "12px" }} />
@@ -855,12 +940,24 @@ function App() {
     setImportFileName(file.name);
     const lowerName = String(file.name || "").toLowerCase();
     if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) {
-      setImportUrlsText("");
-      setLoadMsg("Excel files are not read directly in this box. Please export the sheet as CSV or TSV, then upload it again.");
+      try {
+        if (!window.XLSX) throw new Error("Excel support is not available in this browser session.");
+        const workbook = window.XLSX.read(await file.arrayBuffer(), { type: "array" });
+        const firstSheetName = workbook.SheetNames?.[0];
+        if (!firstSheetName) throw new Error("The Excel file does not contain a readable sheet.");
+        const sheet = workbook.Sheets[firstSheetName];
+        const csv = window.XLSX.utils.sheet_to_csv(sheet, { blankrows: false });
+        setImportUrlsText(csv);
+        setLoadMsg(`Loaded ${file.name}. Review the extracted rows below, then click "Import FE URLs".`);
+      } catch (error) {
+        setImportUrlsText("");
+        setLoadMsg(toUserMessage(error.message, "This Excel file could not be read. Please upload a CSV or TSV instead."));
+      }
       return;
     }
     const text = await file.text();
     setImportUrlsText(text);
+    setLoadMsg(`Loaded ${file.name}. Review the URLs below, then click "Import FE URLs".`);
   }
 
   async function importOwnUrls() {
@@ -916,7 +1013,7 @@ function App() {
     const firstSegment = Object.keys(grouped)[0];
     if (firstSegment) setActiveSegment(firstSegment);
     setStep(3);
-    setLoadMsg(`Imported ${imported.length} FE article URLs from ${importFileName || "the pasted list"}. They are ready to run in Step 3.`);
+    setLoadMsg(`Imported ${imported.length} FE article URLs from ${importFileName || "the pasted list"}. They are now ready for review in Step 3.`);
     setProgress("");
     setLoadingArticles(false);
     window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
@@ -931,6 +1028,7 @@ function App() {
   const unsupportedSegments = Object.entries(segmentStatus).filter(([, v]) => v.type === "unsupported");
   const emptySegments = Object.entries(segmentStatus).filter(([, v]) => v.type === "empty");
   const filteredSegments = segments.filter((sg) => sg.toLowerCase().includes(segmentSearch.toLowerCase()));
+  const statusCounts = getStatusCounts(segmentStatus);
 
   async function analyzeAll() {
     const allArticles = selectedRecommendationArticles;
@@ -976,22 +1074,11 @@ function App() {
       catch (e) {
         const message = String(e.message || e);
         const isUpstream = /Upstream API error|Rate limit exceeded|Server misconfigured|Daily request cap reached/i.test(message);
-        newResults[allArticles[i].id] = {
-          overall_health: "Weak",
-          findings: [{
-            severity: "red",
-            issue_name: "Analysis could not complete",
-            evidence: isUpstream ? "The analysis provider did not return a usable result." : "This page could not be scored in the current run.",
-            what_is_wrong: toUserMessage(message, "The analysis could not finish for this page."),
-            why_it_hurts: isUpstream ? "The run should stop before more paid requests are used." : "This page was skipped without a final recommendation.",
-            fix: isUpstream ? "Retry after confirming the selected provider and model." : "Retry this page in a new run.",
-          }],
-          _failed: true,
-        };
+        newResults[allArticles[i].id] = buildClientFallbackResult(allArticles[i], analysisMode, message, aiProvider, aiModel, costProfile);
         consecutiveUpstreamErrors = isUpstream ? consecutiveUpstreamErrors + 1 : 0;
         if (consecutiveUpstreamErrors >= MAX_CONSECUTIVE_UPSTREAM_ERRORS) {
           setResults({ ...newResults });
-          setAnalysisNotice(`Analysis stopped automatically after ${consecutiveUpstreamErrors} consecutive paid API failures. Check the provider, model, or API key before retrying.`);
+          setAnalysisNotice(`Analysis stopped automatically after ${consecutiveUpstreamErrors} consecutive paid-model failures. The pages already completed in this run still include fallback recommendations for review.`);
           break;
         }
       }
@@ -1024,22 +1111,11 @@ function App() {
       catch (e) {
         const message = String(e.message || e);
         const isUpstream = /Upstream API error|Rate limit exceeded|Server misconfigured|Daily request cap reached/i.test(message);
-        newResults[toRetry[i].id] = {
-          overall_health: "Weak",
-          findings: [{
-            severity: "red",
-            issue_name: "Analysis could not complete",
-            evidence: isUpstream ? "The analysis provider did not return a usable result." : "This page could not be scored in the current run.",
-            what_is_wrong: toUserMessage(message, "The analysis could not finish for this page."),
-            why_it_hurts: isUpstream ? "The provider is still failing, so repeated retries are likely to use more paid requests." : "This page was skipped without a final recommendation.",
-            fix: isUpstream ? "Confirm the selected provider and model before retrying." : "Retry this page in a new run.",
-          }],
-          _failed: true,
-        };
+        newResults[toRetry[i].id] = buildClientFallbackResult(toRetry[i], analysisMode, message, aiProvider, aiModel, costProfile);
         consecutiveUpstreamErrors = isUpstream ? consecutiveUpstreamErrors + 1 : 0;
         if (consecutiveUpstreamErrors >= MAX_CONSECUTIVE_UPSTREAM_ERRORS) {
           setResults({ ...newResults });
-          setAnalysisNotice(`Retry stopped automatically after ${consecutiveUpstreamErrors} consecutive paid API failures.`);
+          setAnalysisNotice(`Retry stopped automatically after ${consecutiveUpstreamErrors} consecutive paid-model failures.`);
           break;
         }
       }
@@ -1104,21 +1180,40 @@ function App() {
   return (
     <div>
       <div className="page-header">
-        <div><p className="login-kicker">Content operations dashboard</p><h1 style={st.h1}>FE Content Audit</h1><p style={st.subtitle}>Load FE segments, pre-audit pages at scale, and reserve Claude analysis for priority reviews.</p></div>
+        <div><p className="login-kicker">SEO content operations</p><h1 style={st.h1}>FE Content Audit</h1><p style={st.subtitle}>A cleaner review workspace for SEO-led audits, editorial follow-up, segment scanning, and practical page-level recommendations.</p></div>
         <button style={st.btnOutline} onClick={() => { clearSession(); setAuthed(false); }}>Log out</button>
       </div>
 
-      <div className="dashboard-grid">
-        <div className="metric-card"><p className="metric-label">Segments</p><p className="metric-value">{segments.length}</p></div>
-        <div className="metric-card"><p className="metric-label">Loaded articles</p><p className="metric-value">{totalArticles}</p></div>
-        <div className="metric-card"><p className="metric-label">Analysed</p><p className="metric-value">{resultEntries.length}</p></div>
-        <div className="metric-card"><p className="metric-label">No-cost audits</p><p className="metric-value">{sourceOnlyCount}</p></div>
+      <div className="summary-grid">
+        <div className="hero-panel">
+          <div className="hero-inner">
+            <p className="step-label">Audit summary</p>
+            <p style={{ fontSize: "30px", fontWeight: 700, margin: "0 0 8px", color: C.ink }}>Review the right FE pages faster.</p>
+            <p style={{ ...st.stepDesc, maxWidth: "560px", marginBottom: "18px" }}>Load segment pages, import your own URL sets, and keep recommendations readable enough for SEO planning and editorial action.</p>
+            <div className="dashboard-grid" style={{ marginBottom: 0 }}>
+              <div className="metric-card"><p className="metric-label">Segments</p><p className="metric-value">{segments.length}</p></div>
+              <div className="metric-card"><p className="metric-label">Loaded pages</p><p className="metric-value">{totalArticles}</p></div>
+              <div className="metric-card"><p className="metric-label">Reviewed</p><p className="metric-value">{resultEntries.length}</p></div>
+              <div className="metric-card"><p className="metric-label">Fallback review</p><p className="metric-value">{Object.values(results).filter((r) => r._fallback).length}</p></div>
+            </div>
+          </div>
+        </div>
+        <div className="panel" style={{ padding: "20px" }}>
+          <p className="step-label">Source health</p>
+          <div className="insight-list">
+            <div className="insight-row"><span>Ready segments</span><strong style={{ color: C.ink }}>{statusCounts.ready}</strong></div>
+            <div className="bar-track"><div className="bar-fill" style={{ width: `${segments.length ? Math.max(6, Math.round((statusCounts.ready / segments.length) * 100)) : 0}%` }} /></div>
+            <div className="insight-row"><span>No pages in selected range</span><strong style={{ color: C.warn }}>{statusCounts.empty}</strong></div>
+            <div className="insight-row"><span>Needs source review</span><strong style={{ color: "#ff8d82" }}>{statusCounts.unsupported}</strong></div>
+            <div className="insight-row"><span>Saved browser snapshots</span><strong style={{ color: C.ink }}>{savedAnalyses.length}</strong></div>
+          </div>
+        </div>
       </div>
 
       <div style={st.card}>
         <p className="step-label">Step 1</p>
         <p style={st.stepTitle}>Load segments</p>
-        <p style={st.stepDesc}>Load all active FE segments from the preprod WordPress source. The product handles the source request automatically after login.</p>
+        <p style={st.stepDesc}>Load active FE segments from the connected WordPress source. The app handles the source request after login, then flags which segments are ready, empty, or need source review.</p>
         <div style={{ marginTop: "12px" }}><button style={st.btnPrimary} onClick={loadSegments}>Load all segments</button></div>
         {segments.length > 0 && <p style={{ fontSize: "13px", color: C.success, marginTop: "10px", fontWeight: 700 }}>Loaded {segments.length} active segments.</p>}
         {loadMsg && step === 1 && <p style={{ fontSize: "13px", color: C.error, marginTop: "8px" }}>{loadMsg}</p>}
@@ -1148,7 +1243,7 @@ function App() {
         <div style={st.card}>
           <p className="step-label">Step 2</p>
           <p style={st.stepTitle}>Load articles for each segment</p>
-          <p style={st.stepDesc}>Choose the date range, wait for the segment check to finish, then load one page or all available pages for a valid segment.</p>
+          <p style={st.stepDesc}>Choose the date range, pick a valid segment, then load pages into the review queue. Segments with no pages or unstable source data are flagged before you start loading.</p>
           <label style={{ display: "block", fontSize: "13px", fontWeight: 700, marginBottom: "12px" }}>Publication month<br /><select aria-label="Publication month" style={{ width: "100%", marginTop: "6px" }} value={selectedMonth} onChange={(e) => selectMonth(e.target.value)}>{monthOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
           <input style={{ width: "100%", marginBottom: "10px" }} placeholder="Search segments" value={segmentSearch} onChange={(e) => setSegmentSearch(e.target.value)} />
           <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "14px", maxHeight: "140px", overflowY: "auto" }}>
@@ -1164,17 +1259,17 @@ function App() {
           {checkingSegments && <p style={{ ...st.caption, marginTop: "-4px", marginBottom: "10px" }}>Checking which segments have valid pages for this month/year. This now runs before page loading so unavailable categories are flagged early.</p>}
           <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "10px" }}>
             <span style={{ fontWeight: 700, fontSize: "14px" }}>Selected: {activeSegment || "none"}</span>
-            <label style={st.caption}>Articles per fetch:</label>
+            <label style={st.caption}>Pages to load per request:</label>
             <input type="number" min="1" max={MAX_ARTICLES_PER_REQUEST} style={{ width: "74px" }} value={articlesPerPage} onChange={(e) => setArticlesPerPage(clampArticlesPerPage(e.target.value))} />
           </div>
-          <p style={{ ...st.caption, marginTop: "-4px" }}>The preprod WordPress source can return up to {MAX_ARTICLES_PER_REQUEST} articles per fetch. Use "Load all available pages" to collect larger month-wise batches.</p>
+          <p style={{ ...st.caption, marginTop: "-4px" }}>This setting controls how many pages are requested each time from the source. Use “Load all available pages” when you want the app to keep collecting the selected month in larger batches.</p>
           {segmentStatus[activeSegment]?.type === "unsupported" && <div style={{ background: C.errorTint, color: C.error, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
           {segmentStatus[activeSegment]?.type === "empty" && <div style={{ background: C.warnTint, color: C.warn, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
           {segmentStatus[activeSegment]?.type === "end-of-range" && <div style={{ background: C.successTint, color: C.success, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
           {activeSegment && (
             <React.Fragment>
               <p style={st.caption}>Next page: {Math.floor((segmentOffsets[activeSegment] || 0) / clampArticlesPerPage(articlesPerPage)) + 1}. Each page loads up to {clampArticlesPerPage(articlesPerPage)} articles from {monthOptions.find((option) => option.value === selectedMonth)?.label}.</p>
-              <p style={{ ...st.caption, marginBottom: "10px" }}>Source: preprod WordPress. Page data is loaded automatically inside the app after login.</p>
+              <p style={{ ...st.caption, marginBottom: "10px" }}>Source: connected WordPress feed. Page data is loaded inside the app after login.</p>
               <div style={{ marginTop: "10px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
                 <button style={st.btnPrimary} onClick={loadArticlesForSegment} disabled={loadingArticles || checkingSegments}>Load next page</button>
                 <button style={st.btnOutline} onClick={loadAllPagesForSegment} disabled={loadingArticles || checkingSegments}>Load all available pages</button>
@@ -1184,15 +1279,15 @@ function App() {
           {loadMsg && <p style={{ fontSize: "13px", color: /loaded|added|saved/i.test(loadMsg) ? C.success : C.error, marginTop: "10px", fontWeight: 600 }}>{loadMsg}</p>}
           <div style={{ marginTop: "18px", paddingTop: "16px", borderTop: `1px solid ${C.hairline}` }}>
             <p style={{ fontSize: "14px", fontWeight: 700, margin: "0 0 6px" }}>Import your own FE URLs</p>
-            <p style={st.stepDesc}>Paste one Financial Express URL per line, or upload a CSV/TSV exported from Google Sheets or Google Drive. Supported columns: `url` and optional `segment`. Excel `.xlsx` files should be exported to CSV first.</p>
+            <p style={st.stepDesc}>Paste one Financial Express URL per line, or upload a CSV, TSV, or TXT file. Supported columns are <strong>url</strong> and optional <strong>segment</strong>. If your list is in Excel, export it as CSV first before uploading.</p>
             <textarea style={{ minHeight: "96px", marginBottom: "10px" }} value={importUrlsText} onChange={(e) => setImportUrlsText(e.target.value)} placeholder={"Examples:\nhttps://www.financialexpress.com/business/...-4312602/\nmarkets,https://www.financialexpress.com/market/...-4312501/"} />
             <div className="toolbar-row">
-              <input type="file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" onChange={handleImportFile} />
+              <input type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,text/csv,text/tab-separated-values,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={handleImportFile} />
               {importFileName && <span style={st.caption}>Loaded file: {importFileName}</span>}
             </div>
             <div style={{ marginTop: "10px" }}>
               <button style={st.btnOutline} onClick={importOwnUrls} disabled={loadingArticles || checkingSegments}>Import FE URLs</button>
-              {totalArticles > 0 && <button style={{ ...st.btnPrimary, marginLeft: "10px" }} onClick={() => setStep(3)}>Review and run imported pages ({totalArticles})</button>}
+              {totalArticles > 0 && <button style={{ ...st.btnPrimary, marginLeft: "10px" }} onClick={() => setStep(3)}>Review loaded pages ({totalArticles})</button>}
             </div>
             {importedArticlesCount > 0 && <p style={{ fontSize: "13px", color: C.success, marginTop: "10px", fontWeight: 600 }}>{importedArticlesCount} imported URLs are ready in Step 3.</p>}
           </div>
@@ -1216,10 +1311,10 @@ function App() {
         <div style={st.card}>
           <p className="step-label">Step 3</p>
           <p style={st.stepTitle}>Review before analysis</p>
-          <p style={st.stepDesc}>{totalArticles} articles across {segmentsWithArticles.length} segment(s). Choose exactly which pages should receive recommendations, then decide whether to use the FE API recommendation flow or a quick local screen. Paid runs now stop automatically if the provider keeps failing.</p>
+          <p style={st.stepDesc}>{totalArticles} pages are loaded across {segmentsWithArticles.length} segment(s). Choose which ones should receive recommendations, then decide whether to use the paid model review or the quick local screen.</p>
           <div className="toolbar-row" style={{ marginBottom: "12px" }}>
             <label style={{ fontSize: "13px", fontWeight: 700 }}>
-              Recommendation count
+              Pages to review
               <br />
               <select aria-label="Recommendation count" style={{ width: "160px", marginTop: "6px" }} value={recommendationCap} onChange={(e) => setRecommendationLimit(Number(e.target.value))}>
                 {RECOMMENDATION_COUNT_OPTIONS.filter((count) => count <= Math.max(totalArticles, 50)).map((count) => <option key={count} value={count}>{count} pages</option>)}
@@ -1229,17 +1324,28 @@ function App() {
             <button style={st.btnOutline} onClick={() => selectAllLoadedArticles(recommendationCap)}>Select first {recommendationCap}</button>
             <button style={st.btnOutline} onClick={() => setSelectedArticleIds(Object.fromEntries(allLoadedArticles.map((article) => [article.id, true])))}>Select all loaded</button>
             <button style={st.btnOutlineError} onClick={() => setSelectedArticleIds({})}>Clear selection</button>
-            <span style={st.caption}>{selectedArticles.length} selected, {selectedRecommendationArticles.length} will run recommendations.</span>
+            <span style={st.caption}>{selectedArticles.length} selected, {selectedRecommendationArticles.length} will run now.</span>
           </div>
           {analysisNotice && <p style={{ fontSize: "13px", color: C.warn, margin: "0 0 12px", fontWeight: 600 }}>{analysisNotice}</p>}
-          <div style={{ maxHeight: "260px", overflowY: "auto", border: `1px solid ${C.hairline}`, borderRadius: "8px" }}>
+          <div className="article-table" style={{ maxHeight: "320px", overflowY: "auto" }}>
+            <div className="article-table-header">
+              <span>Select</span>
+              <span>Page</span>
+              <span>Byline</span>
+              <span>Published</span>
+            </div>
             {segmentsWithArticles.map((seg) => (
               <div key={seg}>
-                <div style={{ background: C.cream, padding: "8px 14px", fontSize: "13px", fontWeight: 700 }}>{seg} ({segmentArticles[seg].length})</div>
+                <div style={{ background: "rgba(255,255,255,0.03)", padding: "10px 14px", fontSize: "13px", fontWeight: 700, color: C.ink }}>{seg} ({segmentArticles[seg].length})</div>
                 {segmentArticles[seg].map((a) => (
-                  <label key={a.id} style={{ display: "flex", gap: "10px", alignItems: "flex-start", padding: "8px 14px", fontSize: "13px", borderBottom: `1px solid ${C.hairline}`, cursor: "pointer" }}>
+                  <label key={a.id} className="article-table-row" style={{ fontSize: "13px", cursor: "pointer" }}>
                     <input type="checkbox" checked={Boolean(selectedArticleIds[a.id])} onChange={(e) => toggleArticleSelection(a.id, e.target.checked)} style={{ marginTop: "2px" }} />
-                    <span>{a.headline} <span style={st.caption}>- {a.byline || "No byline"} - {formatDate(a.publish_date)}</span></span>
+                    <span>
+                      <strong style={{ color: C.ink }}>{a.headline}</strong>
+                      <span style={{ ...st.caption, display: "block", marginTop: "4px" }}>{a.segment}</span>
+                    </span>
+                    <span style={st.caption}>{a.byline || "Byline not available"}</span>
+                    <span style={st.caption}>{formatDate(a.publish_date)}</span>
                   </label>
                 ))}
               </div>
@@ -1276,9 +1382,9 @@ function App() {
               </label>
             </div>
           )}
-          <p style={st.caption}>{analysisMode === "source" ? `This mode does not call Claude or OpenAI. ${selectedRecommendationArticles.length} selected pages will run in the quick local screen.` : `Current provider: ${aiProvider === "anthropic" ? "Anthropic" : "OpenAI"}. Selected model: ${aiModel}. Paid API usage depends on page length and the selected model. If the provider starts failing, the run stops automatically instead of continuing through the full batch.`}</p>
+          <p style={st.caption}>{analysisMode === "source" ? `This mode does not call Claude or OpenAI. ${selectedRecommendationArticles.length} selected pages will run in the quick local screen.` : `Current provider: ${aiProvider === "anthropic" ? "Anthropic" : "OpenAI"}. Selected model: ${aiModel}. Paid usage depends on page length and the selected model. If the provider starts failing, the run stops automatically and completed pages still get fallback recommendations for review.`}</p>
           <div className="toolbar-row">
-            <button style={st.btnPrimary} onClick={analyzeAll} disabled={analyzing || checkingSegments}>{analyzing ? "Analysing..." : `Run recommendations for ${selectedRecommendationArticles.length} selected pages`}</button>
+            <button style={st.btnPrimary} onClick={analyzeAll} disabled={analyzing || checkingSegments}>{analyzing ? "Review in progress..." : `Run recommendations for ${selectedRecommendationArticles.length} pages`}</button>
             {analyzing && <button style={st.btnOutlineError} onClick={stopAnalysis}>Stop analysis</button>}
           </div>
         </div>
@@ -1288,7 +1394,7 @@ function App() {
         <div style={st.card}>
           <p className="step-label">Step 4</p>
           <div className="result-header" style={{ alignItems: "center", gap: "12px", marginBottom: "8px" }}>
-            <p style={st.stepTitle}>Content risks by segment</p>
+            <p style={st.stepTitle}>Recommendation output</p>
             {analyzing && <button style={st.btnOutlineError} onClick={stopAnalysis}>Stop analysis</button>}
           </div>
           {analyzing && <p style={{ fontSize: "14px", color: C.inkMute, marginTop: 0 }}>{progress}</p>}
@@ -1323,6 +1429,7 @@ function App() {
                       <span style={{ fontSize: "12px", padding: "3px 12px", borderRadius: "90px", background: isBad ? C.errorTint : isMid ? C.warnTint : C.successTint, color: isBad ? C.error : isMid ? C.warn : C.success, fontWeight: 700, whiteSpace: "nowrap" }}>{badgeLabel}</span>
                     </div>
                     <p style={{ ...st.caption, margin: "4px 0 10px" }}>{a?.segment} - {a?.byline || "No byline"} - {formatDate(a?.publish_date)}</p>
+                    {r._fallback && <div className="status-chip" style={{ background: C.warnTint, color: C.warn, marginBottom: "10px" }}>Review suggested: this recommendation used the product's fallback rules.</div>}
                     {r.source_audit && <p style={st.caption}>Source-only pre-audit. No Claude tokens used.</p>}
                     {r._model && <p style={st.caption}>Model used: {r._model}{r._provider ? ` via ${r._provider}` : ""}{r._cost_profile ? ` (${r._cost_profile} cost profile)` : ""}</p>}
                     {r._usage && <p style={st.caption}>API usage: {r._usage.input_tokens || 0} input tokens, {r._usage.output_tokens || 0} output tokens.</p>}
