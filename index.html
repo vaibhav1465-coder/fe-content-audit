@@ -563,7 +563,7 @@ async function fetchImportedArticleByUrl(url, preferredSegment) {
   }
 
   const path = parsedUrl.pathname.replace(/\/+$/, "");
-  const postId = path.match(/-(\d+)$/)?.[1];
+  const postId = path.match(/-(\d+)$/)?.[1] || path.match(/\/(\d+)$/)?.[1];
   if (postId) {
     const article = await fetchWpJson(`${WP_BASE}/posts/${postId}`);
     return normalizeImportedArticle(article, preferredSegment, url);
@@ -1241,10 +1241,10 @@ function App() {
           {checkingSegments && <p style={{ ...st.caption, marginTop: "-4px", marginBottom: "10px" }}>Checking which segments have valid pages for this month/year. This now runs before page loading so unavailable categories are flagged early.</p>}
           <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "10px" }}>
             <span style={{ fontWeight: 700, fontSize: "14px" }}>Selected: {activeSegment || "none"}</span>
-            <label style={st.caption}>Articles per API page:</label>
+            <label style={st.caption}>{activeSegmentFeedUrl ? "URLs per fetch:" : "Articles per fetch:"}</label>
             <input type="number" min="1" max={MAX_ARTICLES_PER_REQUEST} style={{ width: "74px" }} value={articlesPerPage} onChange={(e) => setArticlesPerPage(clampArticlesPerPage(e.target.value))} />
           </div>
-          <p style={{ ...st.caption, marginTop: "-4px" }}>FE WordPress allows up to 100 articles per API page. Use "Load all available pages" to collect larger batches.</p>
+          <p style={{ ...st.caption, marginTop: "-4px" }}>{activeSegmentFeedUrl ? `This FE full JSON feed will fetch up to ${clampArticlesPerPage(articlesPerPage)} URLs in each load.` : `FE WordPress allows up to ${MAX_ARTICLES_PER_REQUEST} articles per fetch. Use "Load all available pages" to collect larger batches.`}</p>
           {segmentStatus[activeSegment]?.type === "unsupported" && <div style={{ background: C.errorTint, color: C.error, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
           {segmentStatus[activeSegment]?.type === "empty" && <div style={{ background: C.warnTint, color: C.warn, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
           {segmentStatus[activeSegment]?.type === "end-of-range" && <div style={{ background: C.successTint, color: C.success, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
