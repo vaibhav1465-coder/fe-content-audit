@@ -61,6 +61,170 @@ const DEFAULT_LOW_COST_MODEL = process.env.ANTHROPIC_LOW_COST_MODEL || "claude-h
 const DEFAULT_OPENAI_STANDARD_MODEL = process.env.OPENAI_MODEL || "gpt-5.6-terra";
 const DEFAULT_OPENAI_LOW_COST_MODEL = process.env.OPENAI_LOW_COST_MODEL || "gpt-5.6-luna";
 
+function stripToPlainText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function safeSentence(value, fallback) {
+  const cleaned = stripToPlainText(value);
+  if (!cleaned) return fallback;
+  return cleaned.length > 220 ? `${cleaned.slice(0, 217)}...` : cleaned;
+}
+
+function articleEvidence(article, maxLength = 160) {
+  const candidates = [
+    article.subheading,
+    article.headline,
+    String(article.body_text || "").split(/[.!?]\s/)[0],
+    String(article.body_text || "").slice(0, maxLength),
+  ].map((item) => stripToPlainText(item)).filter(Boolean);
+  const chosen = candidates[0] || "The page content was loaded successfully.";
+  return chosen.length > maxLength ? `${chosen.slice(0, maxLength - 3)}...` : chosen;
+}
+
+function countMatches(text, regex) {
+  return (String(text || "").match(regex) || []).length;
+}
+
+function clampScore(value, minimum = 1, maximum = 5) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+function buildFallbackAnalysis(article, mode, reason, meta = {}) {
+  const bodyText = String(article.body_text || "").slice(0, MAX_BODY_TEXT_CHARS);
+  const headline = stripToPlainText(article.headline);
+  const byline = stripToPlainText(article.byline);
+  const evidence = articleEvidence(article);
+  const wordCount = bodyText.trim() ? bodyText.trim().split(/\s+/).length : 0;
+  const sourceSignals = countMatches(bodyText, /https?:\/\/|according to|said|told|data|report|survey|filing|statement|exchange|ministry|rbi|sebi|nse|bse/gi);
+  const expertSignals = countMatches(bodyText, /said|told|according to|analyst|expert|economist|official|spokesperson|ceo|cfo|md|founder|research head/gi);
+  const numericSignals = countMatches(bodyText, /\b\d+(?:\.\d+)?%?\b/g);
+  const hasByline = Boolean(byline);
+  const fallbackNote = safeSentence(reason, "The selected model did not return a usable recommendation, so this page was assessed using the product's built-in editorial rules.");
+  const findings = [];
+
+  if (wordCount < 350) {
+    findings.push({
+      severity: "red",
+      issue_name: "Needs more useful depth",
+      evidence,
+      what_is_wrong: `The page currently has about ${wordCount} words, which is light for a content-improvement review.`,
+      why_it_hurts: "Readers may not get enough context, proof points, or next-step guidance from the page.",
+      fix: "Expand the article with more concrete context, named sourcing, and a practical takeaway section.",
+      optimization_steps: [
+        "Add one short background section explaining why this update matters.",
+        "Add at least one named source, quote, or official data point.",
+        "End with a clear takeaway for readers in simple language."
+      ],
+      expected_improvement: "A fuller article should make the page more useful, clearer, and easier for readers to trust.",
+    });
+  }
+
+  if (sourceSignals < 2 || expertSignals < 1) {
+    findings.push({
+      severity: findings.length ? "yellow" : "red",
+      issue_name: "Stronger sourcing is needed",
+      evidence,
+      what_is_wrong: "The page does not show enough visible sourcing, expert context, or supporting evidence for its main claims.",
+      why_it_hurts: "Important business and YMYL-style pages are more useful when claims are clearly supported.",
+      fix: "Add named attribution, official data, and one expert or company voice directly tied to the main claim.",
+      optimization_steps: [
+        "Identify the page's main claim and support it with one named source.",
+        "Add one expert, company, or official quote that explains the claim.",
+        "Include one concrete figure, date, or document reference where possible."
+      ],
+      expected_improvement: "Clearer sourcing should make the page feel more credible and more actionable for readers.",
+    });
+  }
+
+  if (!hasByline && findings.length < 2) {
+    findings.push({
+      severity: "yellow",
+      issue_name: "Author detail should be clearer",
+      evidence: headline || evidence,
+      what_is_wrong: "The loaded page does not include a strong visible byline or author context in the current payload.",
+      why_it_hurts: "Readers benefit from knowing who reported or reviewed the content.",
+      fix: "Confirm the byline and add stronger author context or profile linkage in the publishing workflow.",
+      optimization_steps: [
+        "Confirm the correct byline in the CMS.",
+        "Link the byline to an author profile where available."
+      ],
+      expected_improvement: "Clearer authorship can improve trust and accountability for the page.",
+    });
+  }
+
+  if (!findings.length) {
+    findings.push({
+      severity: "yellow",
+      issue_name: "Add one stronger proof point",
+      evidence,
+      what_is_wrong: fallbackNote,
+      why_it_hurts: "Without one stronger proof point, the page may feel less complete than it could be.",
+      fix: "Add one concrete data point, source, or explanatory section tied to the main reader question.",
+      optimization_steps: [
+        "Add one supporting fact, number, or official reference.",
+        "Explain the practical reader impact in one short paragraph."
+      ],
+      expected_improvement: "A clearer proof point should make the page more informative and more useful for readers.",
+    });
+  }
+
+  const limitedFindings = findings.slice(0, 2);
+
+  if (mode === "hcs") {
+    const informationGainScore = clampScore(wordCount >= 700 ? 4 : wordCount >= 450 ? 3 : 2);
+    const experienceScore = clampScore(expertSignals >= 2 ? 4 : expertSignals >= 1 ? 3 : 2);
+    const trustScore = clampScore((hasByline ? 1 : 0) + (sourceSignals >= 2 ? 2 : 1) + (numericSignals >= 3 ? 1 : 0), 2, 5);
+    const verdict = limitedFindings.some((item) => item.severity === "red") ? "Dead Weight" : "Borderline";
+    return {
+      verdict,
+      information_gain_score: informationGainScore,
+      experience_score: experienceScore,
+      trust_score: trustScore,
+      spam_risk: wordCount < 350 ? "thin-content" : "none",
+      findings: limitedFindings,
+      bottom_line: verdict === "Dead Weight"
+        ? "This page needs stronger depth, sourcing, and explanation before it can be relied on as a strong content asset."
+        : "This page has a usable base, but it still needs stronger proof points and clearer reader value.",
+      _fallback: true,
+      _fallback_reason: fallbackNote,
+      _usage: meta.usage || null,
+      _model: meta.model || "built-in-fallback",
+      _cost_profile: meta.costProfile || null,
+      _provider: meta.provider || "fallback",
+      _config_signal: meta.configSignal || null,
+    };
+  }
+
+  const ymylScore = clampScore(wordCount >= 700 ? 4 : wordCount >= 450 ? 3 : 2);
+  const experience = clampScore(expertSignals >= 2 ? 4 : expertSignals >= 1 ? 3 : 2);
+  const expertise = clampScore(sourceSignals >= 3 ? 4 : sourceSignals >= 2 ? 3 : 2);
+  const authoritativeness = clampScore((hasByline ? 1 : 0) + (sourceSignals >= 2 ? 2 : 1), 2, 5);
+  const trustworthiness = clampScore((hasByline ? 1 : 0) + (numericSignals >= 3 ? 1 : 0) + (sourceSignals >= 2 ? 2 : 1), 2, 5);
+  const overallHealth = limitedFindings.some((item) => item.severity === "red") ? "Weak" : "Needs Work";
+  return {
+    overall_health: overallHealth,
+    findings: limitedFindings,
+    whats_working: sourceSignals >= 2 ? ["The page already includes some attributed or factual support."] : [],
+    bottom_line: overallHealth === "Weak"
+      ? "This page needs stronger sourcing, depth, and practical explanation before it can be treated as a strong content asset."
+      : "This page has a workable base, but it still needs clearer proof points and reader guidance.",
+    ymyl_score: ymylScore,
+    experience,
+    expertise,
+    authoritativeness,
+    trustworthiness,
+    flagged_guidelines: limitedFindings.some((item) => item.issue_name.includes("sourcing")) ? ["G2", "G3", "G4"] : ["G1", "G2"],
+    _fallback: true,
+    _fallback_reason: fallbackNote,
+    _usage: meta.usage || null,
+    _model: meta.model || "built-in-fallback",
+    _cost_profile: meta.costProfile || null,
+    _provider: meta.provider || "fallback",
+    _config_signal: meta.configSignal || null,
+  };
+}
+
 function fingerprintKey(apiKey) {
   if (!apiKey) return "missing";
   return createHash("sha256").update(String(apiKey)).digest("hex").slice(0, 10);
@@ -173,6 +337,8 @@ export function validateAnalysisResult(result, article) {
   });
 }
 
+export { buildFallbackAnalysis };
+
 function tryRepairTruncatedJson(text) {
   let base = text;
   const quoteCount = (base.match(/(?<!\\)"/g) || []).length;
@@ -254,7 +420,14 @@ export default async function handler(req, res) {
       if (repaired) {
         repaired._wasTruncated = true;
         if (!validateAnalysisResult(repaired, article)) {
-          return res.status(502).json({ error: "The analysis response was incomplete or not grounded in the article. Please retry." });
+          const fallback = buildFallbackAnalysis(article, mode, "The selected model returned an unusable recommendation, so the page was assessed using the product's built-in editorial rules.", {
+            usage: upstream.usage || null,
+            model: config.model,
+            costProfile,
+            provider: config.provider,
+            configSignal,
+          });
+          return res.status(200).json(fallback);
         }
         repaired._usage = upstream.usage || null;
         repaired._model = config.model;
@@ -263,11 +436,25 @@ export default async function handler(req, res) {
         repaired._config_signal = configSignal;
         return res.status(200).json(repaired);
       }
-      return res.status(502).json({ error: "Could not parse model output as JSON", raw: cleaned.slice(0, 500), config_signal: configSignal });
+      const fallback = buildFallbackAnalysis(article, mode, "The selected model did not return a usable structured recommendation, so the page was assessed using the product's built-in editorial rules.", {
+        usage: upstream.usage || null,
+        model: config.model,
+        costProfile,
+        provider: config.provider,
+        configSignal,
+      });
+      return res.status(200).json(fallback);
     }
 
     if (!validateAnalysisResult(parsed, article)) {
-      return res.status(502).json({ error: "The analysis response was incomplete or not grounded in the article. Please retry.", config_signal: configSignal });
+      const fallback = buildFallbackAnalysis(article, mode, "The selected model returned an incomplete recommendation, so the page was assessed using the product's built-in editorial rules.", {
+        usage: upstream.usage || null,
+        model: config.model,
+        costProfile,
+        provider: config.provider,
+        configSignal,
+      });
+      return res.status(200).json(fallback);
     }
 
     parsed._usage = upstream.usage || null;
@@ -279,13 +466,20 @@ export default async function handler(req, res) {
   } catch (e) {
     if (String(e).startsWith("Error: Upstream API error:")) {
       const detail = String(e).replace(/^Error: Upstream API error:\s*/, "").slice(0, 500);
-      const modelUnavailable = config.provider === "anthropic" && /not_found_error/i.test(detail);
-      return res.status(502).json({
-        error: modelUnavailable ? "Configured Anthropic model is not available for this workspace." : "Upstream API error",
-        detail: modelUnavailable ? `The configured Anthropic model (${config.model}) is not available for this workspace.` : detail,
-        config_signal: configSignal,
+      const fallback = buildFallbackAnalysis(article, mode, `The selected model could not finish the recommendation (${detail.slice(0, 180)}). The page was assessed using the product's built-in editorial rules instead.`, {
+        model: config.model,
+        costProfile,
+        provider: config.provider,
+        configSignal,
       });
+      return res.status(200).json(fallback);
     }
-    return res.status(500).json({ error: "Internal error", detail: String(e).slice(0, 500), config_signal: configSignal });
+    const fallback = buildFallbackAnalysis(article, mode, "The analysis service hit an internal issue, so the page was assessed using the product's built-in editorial rules instead.", {
+      model: config.model,
+      costProfile,
+      provider: config.provider,
+      configSignal,
+    });
+    return res.status(200).json(fallback);
   }
 }

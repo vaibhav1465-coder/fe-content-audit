@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import test from "node:test";
 import authHandler from "../api/auth.js";
 import { verifyToken } from "../api/_verifyToken.js";
-import { validateAnalysisResult } from "../api/analyze.js";
+import { buildFallbackAnalysis, validateAnalysisResult } from "../api/analyze.js";
 
 function responseRecorder() {
   return {
@@ -68,4 +68,25 @@ test("analysis validation accepts grounded recommendations and rejects invented 
   };
   assert.equal(validateAnalysisResult(result, article), true);
   assert.equal(validateAnalysisResult({ ...result, findings: [{ ...result.findings[0], evidence: "invented quotation" }] }, article), false);
+});
+
+test("fallback analysis always returns a usable recommendation shape", () => {
+  const article = {
+    headline: "Markets react to new guidance",
+    subheading: "Experts say investors should watch policy signals",
+    byline: "FE Bureau",
+    body_text: "Markets react to new guidance. Analysts said investors should watch policy signals closely. According to exchange data, volumes rose 12% after the announcement.",
+  };
+
+  const feResult = buildFallbackAnalysis(article, "fe", "Model output was unusable.");
+  assert.equal(Array.isArray(feResult.findings), true);
+  assert.equal(feResult.findings.length >= 1, true);
+  assert.equal(typeof feResult.bottom_line, "string");
+  assert.equal(feResult._fallback, true);
+
+  const hcsResult = buildFallbackAnalysis(article, "hcs", "Model output was unusable.");
+  assert.equal(Array.isArray(hcsResult.findings), true);
+  assert.equal(hcsResult.findings.length >= 1, true);
+  assert.equal(typeof hcsResult.bottom_line, "string");
+  assert.equal(hcsResult._fallback, true);
 });
