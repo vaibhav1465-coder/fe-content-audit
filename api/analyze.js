@@ -105,6 +105,42 @@ RETURN THIS EXACT JSON SHAPE:
   }
 }`;
 
+const SYSTEM_PROMPT_NATURAL_AUDIT = `You are the Elite SEO Content Quality & Core Algorithm Auditor for Financial Express.
+
+Give a grounded, plain-language audit of the supplied article. Do not use JSON. Do not use markdown fences. Use only what is present in the article.
+
+Return the audit in this exact easy-to-parse text structure:
+
+CLASSIFICATION: Keep|Overhaul|De-index
+
+HCS & INFORMATION GAIN
+- Title: short title
+  Analysis: grounded explanation in 2-4 sentences
+  Evidence: verbatim excerpt from article
+
+E-E-A-T & TRUST
+- Title: short title
+  Analysis: grounded explanation in 2-4 sentences
+  Evidence: verbatim excerpt from article
+
+SPAM & SCALED ABUSE
+- Title: short title
+  Analysis: grounded explanation in 2-4 sentences
+  Evidence: verbatim excerpt from article
+
+EDITORIAL RECOMMENDATION
+Summary: leadership-ready summary
+Immediate action: short action line
+Next steps:
+1. clear next step
+2. clear next step
+
+Rules:
+- Provide 1 to 3 findings per section.
+- If the article is strong, say so directly.
+- Never invent evidence.
+- Keep the wording practical and authentic.`;
+
 let supabase = null;
 if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
   supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -387,6 +423,69 @@ function parseCandidateJson(text) {
   }
 }
 
+function parseNaturalAuditToResult(text) {
+  const raw = String(text || "").replace(/\r/g, "").trim();
+  if (!raw) return null;
+  const classification = raw.match(/CLASSIFICATION:\s*(Keep|Overhaul|De-index)/i)?.[1] || "Overhaul";
+  const sectionChunk = (start, endList) => {
+    const startRegex = new RegExp(start, "i");
+    const startMatch = raw.match(startRegex);
+    if (!startMatch || startMatch.index === undefined) return "";
+    const from = startMatch.index + startMatch[0].length;
+    let to = raw.length;
+    for (const end of endList) {
+      const endRegex = new RegExp(end, "i");
+      const slice = raw.slice(from);
+      const endMatch = slice.match(endRegex);
+      if (endMatch && endMatch.index !== undefined) {
+        to = Math.min(to, from + endMatch.index);
+      }
+    }
+    return raw.slice(from, to).trim();
+  };
+  const parseFindings = (chunk) => {
+    if (!chunk) return [];
+    const items = chunk.split(/\n(?=-\s*Title:)/).map((part) => part.trim()).filter(Boolean);
+    return items.map((item, index) => {
+      const title = item.match(/-+\s*Title:\s*(.+)/i)?.[1]?.trim()
+        || item.match(/^([^\n:]{3,120})/i)?.[1]?.trim()
+        || `Finding ${index + 1}`;
+      const analysis = item.match(/Analysis:\s*([\s\S]*?)(?:\n\s*Evidence:|$)/i)?.[1]?.trim() || item.trim();
+      const evidenceLine = item.match(/Evidence:\s*([\s\S]*?)$/i)?.[1]?.trim() || "";
+      const evidence = evidenceLine
+        ? evidenceLine.split(/\s*\|\s*|;\s*/).map((part) => stripToPlainText(part)).filter(Boolean).slice(0, 3)
+        : [];
+      return { title, analysis, evidence };
+    }).filter((finding) => finding.analysis);
+  };
+
+  const hcsChunk = sectionChunk("HCS\\s*&\\s*INFORMATION\\s*GAIN", ["E-E-A-T\\s*&\\s*TRUST", "SPAM\\s*&\\s*SCALED\\s*ABUSE", "EDITORIAL\\s*RECOMMENDATION"]);
+  const eeatChunk = sectionChunk("E-E-A-T\\s*&\\s*TRUST", ["SPAM\\s*&\\s*SCALED\\s*ABUSE", "EDITORIAL\\s*RECOMMENDATION"]);
+  const spamChunk = sectionChunk("SPAM\\s*&\\s*SCALED\\s*ABUSE", ["EDITORIAL\\s*RECOMMENDATION"]);
+  const recommendationChunk = sectionChunk("EDITORIAL\\s*RECOMMENDATION", []);
+
+  return normalizeModelResult({
+    page_classification: classification,
+    hcs_info_gain: {
+      mandate: "Google's mandate: Content must provide original reporting, research, or analysis, and must not leave users feeling they need to search again.",
+      findings: parseFindings(hcsChunk),
+    },
+    eeat_trust: {
+      mandate: "Google's mandate: High-quality YMYL (Your Money or Your Life) content must be written by experts, cite authoritative primary sources, and demonstrate first-hand experience.",
+      findings: parseFindings(eeatChunk),
+    },
+    spam_scaled_abuse: {
+      mandate: "Google's mandate: Pages must not be generated at scale to manipulate search rankings, nor should they lack depth, real examples, or specific data points.",
+      findings: parseFindings(spamChunk),
+    },
+    editorial_leadership_recommendation: {
+      summary: recommendationChunk.match(/Summary:\s*([\s\S]*?)(?:\nImmediate action:|$)/i)?.[1]?.trim() || "",
+      immediate_action_required: recommendationChunk.match(/Immediate action:\s*([\s\S]*?)(?:\nNext steps:|$)/i)?.[1]?.trim() || "",
+      next_steps: Array.from(recommendationChunk.matchAll(/\n?\s*\d+\.\s*(.+)/g)).map((match) => stripToPlainText(match[1])).filter(Boolean).slice(0, 6),
+    },
+  });
+}
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", process.env.ALLOWED_ORIGIN || "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -462,9 +561,19 @@ export default async function handler(req, res) {
     }
 
     if (!validateAnalysisResult(parsed, article)) {
+      upstream = await requestDeepAnalysis({
+        config,
+        systemPrompt: SYSTEM_PROMPT_NATURAL_AUDIT,
+        article,
+        maxTokens: 1000,
+      });
+      parsed = parseNaturalAuditToResult(upstream.text || "");
+    }
+
+    if (!validateAnalysisResult(parsed, article)) {
       return res.status(502).json({
         error: "Analysis request failed",
-        detail: "The page analysis response could not be shaped into the required audit format for this run. Please retry this page.",
+        detail: "The page analysis response could not be converted into a usable recommendation in this run. Please retry this page.",
         config_signal: configSignal,
       });
     }
