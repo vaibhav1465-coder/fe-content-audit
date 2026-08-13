@@ -65,6 +65,46 @@ QUALITY BAR:
 - If the article is strong in a section, say so directly and explain why with evidence.
 - Use plain business language, not vague SEO jargon.`;
 
+const SYSTEM_PROMPT_FORMATTER = `You are the final response formatter for FE Content Audit.
+
+Your job is to take a raw audit draft and convert it into the exact JSON schema required by the application.
+
+RULES:
+1. Use only evidence that appears in the supplied article context or the supplied raw audit draft.
+2. Never invent evidence.
+3. If the draft is partial, salvage the strongest grounded findings instead of failing.
+4. Keep the output concise, professional, and in valid JSON only.
+5. Return at least 1 grounded finding per section when possible.
+6. No markdown fences. No commentary outside JSON.
+
+RETURN THIS EXACT JSON SHAPE:
+{
+  "page_classification": "Keep|Overhaul|De-index",
+  "hcs_info_gain": {
+    "mandate": "Google's mandate: Content must provide original reporting, research, or analysis, and must not leave users feeling they need to search again.",
+    "findings": [
+      { "title": "short title", "analysis": "grounded analysis", "evidence": ["verbatim excerpt 1"] }
+    ]
+  },
+  "eeat_trust": {
+    "mandate": "Google's mandate: High-quality YMYL (Your Money or Your Life) content must be written by experts, cite authoritative primary sources, and demonstrate first-hand experience.",
+    "findings": [
+      { "title": "short title", "analysis": "grounded analysis", "evidence": ["verbatim excerpt 1"] }
+    ]
+  },
+  "spam_scaled_abuse": {
+    "mandate": "Google's mandate: Pages must not be generated at scale to manipulate search rankings, nor should they lack depth, real examples, or specific data points.",
+    "findings": [
+      { "title": "short title", "analysis": "grounded analysis", "evidence": ["verbatim excerpt 1"] }
+    ]
+  },
+  "editorial_leadership_recommendation": {
+    "summary": "leadership-ready summary",
+    "immediate_action_required": "short action line",
+    "next_steps": ["clear next step 1", "clear next step 2"]
+  }
+}`;
+
 let supabase = null;
 if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
   supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -72,8 +112,8 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
 
 const DAILY_BUDGET_CAP = Number(process.env.DAILY_REQUEST_CAP || 500);
 const PER_MINUTE_LIMIT = Number(process.env.PER_MINUTE_LIMIT_PER_IP || 15);
-const MAX_BODY_TEXT_CHARS = Number(process.env.MAX_BODY_TEXT_CHARS || 8000);
-const MAX_ARTICLE_PAYLOAD_CHARS = Number(process.env.MAX_ARTICLE_PAYLOAD_CHARS || 12000);
+const MAX_BODY_TEXT_CHARS = Number(process.env.MAX_BODY_TEXT_CHARS || 6000);
+const MAX_ARTICLE_PAYLOAD_CHARS = Number(process.env.MAX_ARTICLE_PAYLOAD_CHARS || 9000);
 const DEFAULT_STANDARD_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 const DEFAULT_LOW_COST_MODEL = process.env.ANTHROPIC_LOW_COST_MODEL || "claude-haiku-4-5-20251001";
 const DEFAULT_OPENAI_STANDARD_MODEL = process.env.OPENAI_MODEL || "gpt-5.6-terra";
@@ -96,6 +136,10 @@ function buildUserPrompt(article) {
   const segment = String(article.segment || "(missing)").slice(0, 100);
   const bodyText = String(article.body_text || "").slice(0, MAX_BODY_TEXT_CHARS);
   return `Headline: ${headline}\nSubheading: ${subheading}\nByline: ${byline}\nPublish date: ${publishDate}\nSegment: ${segment}\nBody text: ${bodyText}`;
+}
+
+function buildFormatterPrompt(article, rawDraft) {
+  return `${buildUserPrompt(article)}\n\nRaw audit draft to salvage and reformat:\n${String(rawDraft || "").slice(0, 5000)}`;
 }
 
 function validateArticleInput(article) {
@@ -123,17 +167,27 @@ function resolveAiConfig(provider, model, costProfile) {
   };
 }
 
-async function requestAnthropicAnalysis({ apiKey, model, systemPrompt, article }) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+async function fetchWithTimeout(url, options, timeoutMs = 22000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function requestAnthropicAnalysis({ apiKey, model, systemPrompt, article, userPrompt, maxTokens = 1100 }) {
+  const response = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model,
-      max_tokens: 1000,
+      max_tokens: maxTokens,
       system: systemPrompt,
-      messages: [{ role: "user", content: buildUserPrompt(article) }],
+      messages: [{ role: "user", content: userPrompt || buildUserPrompt(article) }],
     }),
-  });
+  }, 22000);
   if (!response.ok) {
     const errText = await response.text();
     throw new Error(`Upstream API error: ${errText.slice(0, 500)}`);
@@ -145,8 +199,8 @@ async function requestAnthropicAnalysis({ apiKey, model, systemPrompt, article }
   };
 }
 
-async function requestOpenAiAnalysis({ apiKey, model, systemPrompt, article }) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
+async function requestOpenAiAnalysis({ apiKey, model, systemPrompt, article, userPrompt, maxTokens = 1100 }) {
+  const response = await fetchWithTimeout("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -158,13 +212,13 @@ async function requestOpenAiAnalysis({ apiKey, model, systemPrompt, article }) {
         },
         {
           role: "user",
-          content: [{ type: "input_text", text: buildUserPrompt(article) }],
+          content: [{ type: "input_text", text: userPrompt || buildUserPrompt(article) }],
         },
       ],
-      max_output_tokens: 1000,
+      max_output_tokens: maxTokens,
       store: false,
     }),
-  });
+  }, 22000);
   if (!response.ok) {
     const errText = await response.text();
     throw new Error(`Upstream API error: ${errText.slice(0, 500)}`);
@@ -176,13 +230,13 @@ async function requestOpenAiAnalysis({ apiKey, model, systemPrompt, article }) {
   };
 }
 
-async function requestDeepAnalysis({ config, systemPrompt, article, repairText = "" }) {
+async function requestDeepAnalysis({ config, systemPrompt, article, repairText = "", userPrompt = "", maxTokens = 1100 }) {
   const prompt = repairText
     ? `${systemPrompt}\n\nYour previous answer was invalid for this exact schema. Repair it now. Keep the same grounded analysis, but return valid JSON only.\nPrevious invalid output:\n${repairText.slice(0, 4000)}`
     : systemPrompt;
   return config.provider === "openai"
-    ? requestOpenAiAnalysis({ apiKey: config.apiKey, model: config.model, systemPrompt: prompt, article })
-    : requestAnthropicAnalysis({ apiKey: config.apiKey, model: config.model, systemPrompt: prompt, article });
+    ? requestOpenAiAnalysis({ apiKey: config.apiKey, model: config.model, systemPrompt: prompt, article, userPrompt, maxTokens })
+    : requestAnthropicAnalysis({ apiKey: config.apiKey, model: config.model, systemPrompt: prompt, article, userPrompt, maxTokens });
 }
 
 function normalizeEvidence(value) {
@@ -311,6 +365,28 @@ function tryRepairTruncatedJson(text) {
   return null;
 }
 
+function extractJsonCandidate(text) {
+  const raw = String(text || "").replace(/```json|```/gi, "").trim();
+  if (!raw) return "";
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return raw.slice(firstBrace, lastBrace + 1);
+  }
+  return raw;
+}
+
+function parseCandidateJson(text) {
+  const candidate = extractJsonCandidate(text);
+  if (!candidate) return { parsed: null, repaired: false, cleaned: "" };
+  try {
+    return { parsed: JSON.parse(candidate), repaired: false, cleaned: candidate };
+  } catch {
+    const repaired = tryRepairTruncatedJson(candidate);
+    return { parsed: repaired, repaired: Boolean(repaired), cleaned: candidate };
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", process.env.ALLOWED_ORIGIN || "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -356,38 +432,39 @@ export default async function handler(req, res) {
   };
 
   try {
-    let upstream = await requestDeepAnalysis({ config, systemPrompt, article });
-    let cleaned = String(upstream.text || "{}").replace(/```json|```/g, "").trim();
-    let parsed = null;
-    let repaired = null;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch {
-      repaired = tryRepairTruncatedJson(cleaned);
-      if (repaired) parsed = repaired;
-    }
-
+    let upstream = await requestDeepAnalysis({ config, systemPrompt, article, maxTokens: 1100 });
+    let { parsed, repaired, cleaned } = parseCandidateJson(upstream.text || "{}");
     parsed = normalizeModelResult(parsed);
 
     if (!validateAnalysisResult(parsed, article)) {
-      upstream = await requestDeepAnalysis({ config, systemPrompt, article, repairText: cleaned });
-      cleaned = String(upstream.text || "{}").replace(/```json|```/g, "").trim();
-      parsed = null;
-      repaired = null;
-      try {
-        parsed = JSON.parse(cleaned);
-      } catch {
-        repaired = tryRepairTruncatedJson(cleaned);
-        if (repaired) parsed = repaired;
-      }
+      const formatterPrompt = buildFormatterPrompt(article, upstream.text || "");
+      upstream = await requestDeepAnalysis({
+        config,
+        systemPrompt: SYSTEM_PROMPT_FORMATTER,
+        article,
+        userPrompt: formatterPrompt,
+        maxTokens: 900,
+      });
+      ({ parsed, repaired, cleaned } = parseCandidateJson(upstream.text || "{}"));
+      parsed = normalizeModelResult(parsed);
     }
 
-    parsed = normalizeModelResult(parsed);
+    if (!validateAnalysisResult(parsed, article)) {
+      upstream = await requestDeepAnalysis({
+        config,
+        systemPrompt,
+        article,
+        repairText: cleaned || String(upstream.text || "").slice(0, 4000),
+        maxTokens: 950,
+      });
+      ({ parsed, repaired, cleaned } = parseCandidateJson(upstream.text || "{}"));
+      parsed = normalizeModelResult(parsed);
+    }
 
     if (!validateAnalysisResult(parsed, article)) {
       return res.status(502).json({
         error: "Analysis request failed",
-        detail: "The selected model did not return the required audit format for this page after two attempts. Please retry the page.",
+        detail: "The page analysis response could not be shaped into the required audit format for this run. Please retry this page.",
         config_signal: configSignal,
       });
     }
@@ -400,6 +477,13 @@ export default async function handler(req, res) {
     if (repaired) parsed._was_truncated = true;
     return res.status(200).json(parsed);
   } catch (e) {
+    if (String(e).includes("AbortError")) {
+      return res.status(504).json({
+        error: "Analysis request failed",
+        detail: "The page analysis took too long for this run. Please retry the page, or run a smaller batch.",
+        config_signal: configSignal,
+      });
+    }
     if (String(e).startsWith("Error: Upstream API error:")) {
       const detail = String(e).replace(/^Error: Upstream API error:\s*/, "").slice(0, 500);
       return res.status(502).json({

@@ -167,9 +167,8 @@ async function callAnalyzeApi(article, mode, costProfile, aiProvider, aiModel) {
   if (response.status === 401) { clearSession(); throw new Error("Session expired. Please log in again."); }
   if (!response.ok) {
     const errBody = await response.json().catch(() => ({}));
-    const signal = errBody.config_signal ? ` [provider=${errBody.config_signal.provider}, model=${errBody.config_signal.model}, key=${errBody.config_signal.key_fingerprint}]` : "";
     const detail = errBody.detail ? ` - ${errBody.detail}` : "";
-    throw new Error((errBody.error || `Request failed with status ${response.status}`) + detail + signal);
+    throw new Error((errBody.error || `Request failed with status ${response.status}`) + detail);
   }
   return response.json();
 }
@@ -235,9 +234,11 @@ function toUserMessage(message, fallback = "Something went wrong. Please try aga
   if (/rate limit exceeded/i.test(text)) return "Too many requests were sent in a short time. Please wait a minute and try again.";
   if (/daily request cap/i.test(text)) return "Today's analysis limit has been reached. Please try again later.";
   if (/configured anthropic model is not available/i.test(text)) return "The selected Claude model is not available right now. Choose another model and try again.";
-  if (/source api returned unreadable json/i.test(text)) return "This source did not return usable page data for the selected segment or month.";
-  if (/could not parse model output/i.test(text)) return "The selected model returned an unusable response. Please retry.";
+  if (/source api returned unreadable json/i.test(text)) return "This source did not return usable page data for the selected URL.";
+  if (/could not parse model output/i.test(text)) return "The selected model returned an unusable response for this page. Please retry.";
   if (/analysis response was incomplete or not grounded/i.test(text)) return "The analysis could not finish cleanly for this page. Please retry.";
+  if (/required audit format/i.test(text) || /shaped into the required audit format/i.test(text)) return "This page could not be converted into the required audit format in this run. Please retry the page.";
+  if (/took too long for this run/i.test(text)) return "This page took too long to analyse in this run. Retry the page or run a smaller batch.";
   if (/upstream api error/i.test(text)) return "The analysis provider is not responding correctly right now. Please retry.";
   if (/server misconfigured/i.test(text)) return "The analysis service is not fully configured right now.";
   if (/internal error/i.test(text)) return "The analysis service hit an internal error. Please retry.";
