@@ -570,21 +570,17 @@ function parseImportedUrlText(text) {
   const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   if (!lines.length) return [];
   const firstParts = lines[0].split(/\t|,/).map((part) => part.trim());
-  const hasHeader = firstParts.some((part) => /url|segment/i.test(part));
+  const hasHeader = firstParts.some((part) => /url/i.test(part));
   const headerMap = hasHeader ? Object.fromEntries(firstParts.map((part, index) => [part.toLowerCase(), index])) : {};
   const rows = hasHeader ? lines.slice(1) : lines;
   return rows.map((line) => {
-    if (/^https?:\/\//i.test(line)) return { url: line, segment: "" };
+    if (/^https?:\/\//i.test(line)) return { url: line };
     const parts = line.split(/\t|,/).map((part) => part.trim());
     if (headerMap.url !== undefined) {
-      return {
-        url: parts[headerMap.url] || "",
-        segment: headerMap.segment !== undefined ? (parts[headerMap.segment] || "") : "",
-      };
+      return { url: parts[headerMap.url] || "" };
     }
     const url = extractUrlFromRow(parts);
-    const segment = parts.length > 1 && parts[0] !== url ? parts[0] : "";
-    return { url, segment };
+    return { url };
   }).filter((row) => row.url);
 }
 
@@ -657,7 +653,7 @@ function LoginScreen({ onSuccess }) {
         </div>
         <div className="mini-card">
           <p className="metric-label">What you get</p>
-          <p style={{ margin: 0, fontSize: "14px", lineHeight: 1.5, color: C.ink }}>Segment loading, month filtering, URL imports, and recommendation cards that are easier to trust and review.</p>
+          <p style={{ margin: 0, fontSize: "14px", lineHeight: 1.5, color: C.ink }}>Direct FE URL imports, spreadsheet upload support, and deep page-level audits in one review format.</p>
         </div>
       </div>
       <form onSubmit={handleSubmit}>
@@ -673,128 +669,23 @@ function LoginScreen({ onSuccess }) {
 
 function App() {
   const [authed, setAuthed] = useState(() => !!getStoredSession());
-  const [step, setStep] = useState(1);
-  const [categoriesJson, setCategoriesJson] = useState("");
-  const [segments, setSegments] = useState([]);
-  const [segmentIds, setSegmentIds] = useState({});
   const [segmentArticles, setSegmentArticles] = useState({});
-  const [activeSegment, setActiveSegment] = useState("");
-  const [articlesJson, setArticlesJson] = useState("");
   const [loadMsg, setLoadMsg] = useState("");
   const [results, setResults] = useState({});
   const [analyzing, setAnalyzing] = useState(false);
   const [loadingArticles, setLoadingArticles] = useState(false);
   const [progress, setProgress] = useState("");
-  const [articlesPerPage, setArticlesPerPage] = useState(50);
-  const [segmentOffsets, setSegmentOffsets] = useState({});
-  const [analysisMode, setAnalysisMode] = useState("fe");
   const [aiProvider, setAiProvider] = useState("anthropic");
-  const [aiModel, setAiModel] = useState(AI_PROVIDER_OPTIONS.anthropic[0].value);
-  const [costProfile, setCostProfile] = useState("low");
+  const [aiModel, setAiModel] = useState(AI_PROVIDER_OPTIONS.anthropic[1]?.value || AI_PROVIDER_OPTIONS.anthropic[0].value);
+  const [costProfile, setCostProfile] = useState("standard");
   const [selectedArticleIds, setSelectedArticleIds] = useState({});
   const [recommendationLimit, setRecommendationLimit] = useState(50);
-  const [segmentStatus, setSegmentStatus] = useState({});
-  const [segmentSearch, setSegmentSearch] = useState("");
   const [savedAnalyses, setSavedAnalyses] = useState(getSavedAnalyses());
   const [savedMsg, setSavedMsg] = useState("");
   const [importUrlsText, setImportUrlsText] = useState("");
   const [importFileName, setImportFileName] = useState("");
-  const [checkingSegments, setCheckingSegments] = useState(false);
-  const monthOptions = getMonthOptions();
-  const [selectedMonth, setSelectedMonth] = useState(monthOptions[0].value);
   const [analysisNotice, setAnalysisNotice] = useState("");
   const stopAnalysisRef = useRef(false);
-  const activeSegmentFeedUrl = "";
-  const importedArticlesCount = (segmentArticles["imported-urls"] || []).length;
-
-  async function scanSegmentAvailability(currentSegments, currentSegmentIds, monthValue, existingArticles = {}) {
-    if (!currentSegments.length) return {};
-    const updates = {};
-    const queue = [...currentSegments];
-    const workerCount = Math.min(SEGMENT_SCAN_CONCURRENCY, currentSegments.length);
-    await Promise.all(Array.from({ length: workerCount }, async () => {
-      while (queue.length) {
-        const segment = queue.shift();
-        if (!segment || !currentSegmentIds[segment]) continue;
-        const status = await checkSegmentAvailability(segment, currentSegmentIds[segment], monthValue);
-        updates[segment] = existingArticles[segment]?.length ? { type: "ok", reason: "" } : (status.type === "ready" ? { type: "idle", reason: "" } : status);
-      }
-    }));
-    return updates;
-  }
-
-  function applySegments(categories) {
-    const cleanCategories = categories.filter((c) => c?.slug && c?.id && Number(c.count || 0) > 0);
-    const slugs = cleanCategories.map((c) => c.slug);
-    if (slugs.length === 0) throw new Error("No active segments were found.");
-    return {
-      slugs,
-      ids: Object.fromEntries(cleanCategories.map((c) => [c.slug, c.id])),
-    };
-  }
-
-  async function loadSegments() {
-    setLoadMsg("Loading all active FE segments...");
-    setCheckingSegments(true);
-    try {
-      const first = await fetchJsonWithMeta(buildSourceApiUrl("categories", { per_page: 100, page: 1 }));
-      let categories = Array.isArray(first.data) ? first.data : [];
-      for (let page = 2; page <= first.totalPages; page++) {
-        const next = await fetchJsonWithMeta(buildSourceApiUrl("categories", { per_page: 100, page }));
-        categories = categories.concat(Array.isArray(next.data) ? next.data : []);
-      }
-      const prepared = applySegments(categories);
-      setLoadMsg(`Checking page availability for ${monthOptions.find((option) => option.value === selectedMonth)?.label}...`);
-      const statuses = await scanSegmentAvailability(prepared.slugs, prepared.ids, selectedMonth);
-      const firstUsableSegment = prepared.slugs.find((segment) => statuses[segment]?.type !== "empty" && statuses[segment]?.type !== "unsupported") || prepared.slugs[0];
-      setSegments(prepared.slugs);
-      setSegmentIds(prepared.ids);
-      setSegmentStatus(statuses);
-      setActiveSegment(firstUsableSegment);
-      setStep(2);
-      setLoadMsg(`${categories.filter((c) => c?.slug && c?.id && Number(c.count || 0) > 0).length} active segments loaded.`);
-    } catch (apiError) {
-      try {
-        const parsed = JSON.parse(categoriesJson);
-        const categories = Array.isArray(parsed) ? parsed : [];
-        const prepared = applySegments(categories);
-        setLoadMsg(`Checking page availability for ${monthOptions.find((option) => option.value === selectedMonth)?.label}...`);
-        const statuses = await scanSegmentAvailability(prepared.slugs, prepared.ids, selectedMonth);
-        const firstUsableSegment = prepared.slugs.find((segment) => statuses[segment]?.type !== "empty" && statuses[segment]?.type !== "unsupported") || prepared.slugs[0];
-        setSegments(prepared.slugs);
-        setSegmentIds(prepared.ids);
-        setSegmentStatus(statuses);
-        setActiveSegment(firstUsableSegment);
-        setStep(2);
-        setLoadMsg(`${categories.length} pasted segments loaded.`);
-      } catch (pasteError) {
-        setLoadMsg(`Could not load segments automatically. ${apiError.message}. You can still paste the full category JSON and try again.`);
-      }
-    }
-    setCheckingSegments(false);
-  }
-
-  function selectSegment(seg) { setActiveSegment(seg); setArticlesJson(""); setLoadMsg(""); }
-
-  async function selectMonth(value) {
-    setSelectedMonth(value);
-    setSegmentArticles({});
-    setSegmentOffsets({});
-    setResults({});
-    setArticlesJson("");
-    setSelectedArticleIds({});
-    setAnalysisNotice("");
-    setStep(2);
-    setLoadMsg(`Checking segment availability for ${monthOptions.find((option) => option.value === value)?.label}...`);
-    if (!segments.length) return;
-    setCheckingSegments(true);
-    const statuses = await scanSegmentAvailability(segments, segmentIds, value);
-    const firstUsableSegment = segments.find((segment) => statuses[segment]?.type !== "empty" && statuses[segment]?.type !== "unsupported") || segments[0];
-    setSegmentStatus(statuses);
-    setActiveSegment(firstUsableSegment);
-    setLoadMsg(`Segment availability checked for ${monthOptions.find((option) => option.value === value)?.label}.`);
-    setCheckingSegments(false);
-  }
 
   function changeAiProvider(provider) {
     setAiProvider(provider);
@@ -818,120 +709,6 @@ function App() {
   function selectAllLoadedArticles(limit) {
     const allArticles = Object.values(segmentArticles).flat().slice(0, limit);
     setSelectedArticleIds(Object.fromEntries(allArticles.map((article) => [article.id, true])));
-  }
-
-  async function addArticlesFromRaw(raw, currentOffset) {
-    const wpError = detectWpRestError(raw);
-
-    if (wpError) {
-      if (currentOffset === 0) {
-        setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: `${wpError.status} ${wpError.code.replace(/_/g, " ")} - the first page failed, so this segment is probably unavailable through FE's article API.` } }));
-        setLoadMsg(`"${activeSegment}" is unavailable through this API.`);
-      } else {
-        setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "end-of-range", reason: `Reached the end of available articles (no more after #${currentOffset}).` } }));
-        setLoadMsg(`All available articles in "${activeSegment}" have been loaded.`);
-      }
-      return;
-    }
-
-    const { after, before } = getMonthRange(selectedMonth);
-    const normalized = normalizeArticles(raw, activeSegment).filter((article) => {
-      const published = new Date(String(article.publish_date).replace(" ", "T"));
-      return !Number.isNaN(published.getTime()) && published >= new Date(after) && published < new Date(before);
-    });
-    const arts = await resolveBylines(normalized);
-    if (arts.length === 0) {
-      setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "empty", reason: `No pages were published in ${monthOptions.find((option) => option.value === selectedMonth)?.label}. Try another month or use Last 12 months.` } }));
-      setLoadMsg(`No articles were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.`);
-      return;
-    }
-
-    setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "ok", reason: "" } }));
-    setSegmentArticles((prev) => {
-      const existing = prev[activeSegment] || [];
-      const existingIds = new Set(existing.map((a) => a.id));
-      const added = arts.filter((a) => !existingIds.has(a.id));
-      if (added.length) {
-        setSelectedArticleIds((current) => {
-          const next = { ...current };
-          added.forEach((article) => { next[article.id] = true; });
-          return next;
-        });
-      }
-      return { ...prev, [activeSegment]: [...existing, ...added] };
-    });
-    setSegmentOffsets((prev) => ({ ...prev, [activeSegment]: currentOffset + clampArticlesPerPage(articlesPerPage) }));
-    setArticlesJson("");
-    setLoadMsg(`Added ${arts.length} articles to "${activeSegment}".`);
-  }
-
-  async function loadArticlesForSegment() {
-    if (!activeSegment || !segmentIds[activeSegment]) { setLoadMsg("Select a segment first."); return; }
-    const perPage = clampArticlesPerPage(articlesPerPage);
-    const currentOffset = segmentOffsets[activeSegment] || 0;
-    const page = Math.floor(currentOffset / perPage) + 1;
-    setLoadMsg(`Loading page ${page} for "${activeSegment}"...`);
-    try {
-      const result = await fetchJsonWithMeta(buildArticleUrl(segmentIds[activeSegment], selectedMonth, perPage, page));
-      await addArticlesFromRaw(result.data, currentOffset);
-      if (page >= result.totalPages) {
-        setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "end-of-range", reason: `Loaded all ${result.total} available articles for this date range.` } }));
-      }
-    } catch (apiError) {
-      if (articlesJson.trim()) {
-        try { await addArticlesFromRaw(JSON.parse(articlesJson), segmentOffsets[activeSegment] || 0); }
-        catch (pasteError) { setLoadMsg(toUserMessage(apiError.message, "The selected pages could not be loaded.")); }
-      } else {
-        try {
-          const fallbackArticles = await fetchLatestFallbackArticles(activeSegment, segmentIds[activeSegment], selectedMonth, perPage);
-          if (fallbackArticles.length) {
-            await addArticlesFromRaw({ list: [{ items: fallbackArticles.map((article) => ({
-              id: article.id,
-              headline: article.headline,
-              introduction: article.subheading,
-              byline: article.byline ? article.byline.split(", ").map((name) => ({ name })) : [],
-              post_date: article.publish_date,
-              body_raw: article.body_text,
-              post_url: article.url,
-              categories: [{ id: String(segmentIds[activeSegment]), slug: activeSegment }],
-            })) }] }, segmentOffsets[activeSegment] || 0);
-            setLoadMsg(`Loaded ${fallbackArticles.length} pages for "${activeSegment}".`);
-            return;
-          }
-        } catch (fallbackError) {
-          setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "unsupported", reason: "This segment could not be loaded from the current source for the selected month." } }));
-          setLoadMsg(`"${activeSegment}" could not be loaded for the selected month.`);
-          return;
-        }
-        setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: "empty", reason: `No pages were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.` } }));
-        setLoadMsg(`No articles were found for "${activeSegment}" in ${monthOptions.find((option) => option.value === selectedMonth)?.label}.`);
-      }
-    }
-  }
-
-  async function loadAllPagesForSegment() {
-    if (!activeSegment || !segmentIds[activeSegment]) { setLoadMsg("Select a segment first."); return; }
-    const perPage = clampArticlesPerPage(articlesPerPage);
-    const startPage = Math.floor((segmentOffsets[activeSegment] || 0) / perPage) + 1;
-    setLoadingArticles(true);
-    try {
-      let total = 0;
-      let totalPages = startPage;
-      for (let page = startPage; page <= totalPages && page < startPage + MAX_AUTO_PAGES_PER_SEGMENT; page++) {
-        setLoadMsg(`Loading ${activeSegment}, page ${page}...`);
-        const result = await fetchJsonWithMeta(buildArticleUrl(segmentIds[activeSegment], selectedMonth, perPage, page));
-        total = result.total;
-        totalPages = result.totalPages;
-        await addArticlesFromRaw(result.data, (page - 1) * perPage);
-        if (!Array.isArray(result.data) || result.data.length === 0) break;
-      }
-      const reachedCap = totalPages >= startPage + MAX_AUTO_PAGES_PER_SEGMENT;
-      setSegmentStatus((prev) => ({ ...prev, [activeSegment]: { type: reachedCap ? "ok" : "end-of-range", reason: reachedCap ? `Paused after ${MAX_AUTO_PAGES_PER_SEGMENT} pages. Load again to continue.` : `Loaded all ${total} available articles for this date range.` } }));
-      setLoadMsg(reachedCap ? `Loaded another ${MAX_AUTO_PAGES_PER_SEGMENT} pages for "${activeSegment}". Load again to continue.` : `Loaded all available articles for "${activeSegment}".`);
-    } catch (error) {
-      setLoadMsg(toUserMessage(error.message, `Could not finish loading "${activeSegment}". Please try again.`));
-    }
-    setLoadingArticles(false);
   }
 
   async function handleImportFile(event) {
@@ -963,16 +740,17 @@ function App() {
   async function importOwnUrls() {
     const rows = parseImportedUrlText(importUrlsText);
     if (!rows.length) {
-      setLoadMsg("Add one FE URL per line, or upload a CSV/TSV with `url` and optional `segment` columns.");
+      setLoadMsg("Add one FE URL per line, or upload a file with a `url` column.");
       return;
     }
     setLoadingArticles(true);
+    setAnalysisNotice("");
     const imported = [];
     try {
       for (let i = 0; i < rows.length; i++) {
         setProgress(`Importing ${i + 1} of ${rows.length} URLs...`);
-        const article = await fetchImportedArticleByUrl(rows[i].url, rows[i].segment);
-        if (article) imported.push(article);
+        const article = await fetchImportedArticleByUrl(rows[i].url, "");
+        if (article) imported.push({ ...article, segment: "uploaded-fe-urls" });
       }
     } catch (error) {
       setLoadingArticles(false);
@@ -981,39 +759,18 @@ function App() {
       return;
     }
 
-    const grouped = imported.reduce((acc, article) => {
-      const segment = article.segment || "imported-urls";
-      if (!acc[segment]) acc[segment] = [];
-      acc[segment].push(article);
-      return acc;
-    }, {});
-
-    setSegments((prev) => {
-      const next = [...prev];
-      Object.keys(grouped).forEach((segment) => { if (!next.includes(segment)) next.push(segment); });
-      return next;
+    const uniqueImported = [];
+    const seen = new Set();
+    imported.forEach((article) => {
+      if (!seen.has(article.id)) {
+        seen.add(article.id);
+        uniqueImported.push(article);
+      }
     });
-    setSegmentArticles((prev) => {
-      const next = { ...prev };
-      Object.entries(grouped).forEach(([segment, articles]) => {
-        const existing = next[segment] || [];
-        const existingIds = new Set(existing.map((article) => article.id));
-        const added = articles.filter((article) => !existingIds.has(article.id));
-        next[segment] = [...existing, ...added];
-        if (added.length) {
-          setSelectedArticleIds((current) => {
-            const nextSelection = { ...current };
-            added.forEach((article) => { nextSelection[article.id] = true; });
-            return nextSelection;
-          });
-        }
-      });
-      return next;
-    });
-    const firstSegment = Object.keys(grouped)[0];
-    if (firstSegment) setActiveSegment(firstSegment);
-    setStep(3);
-    setLoadMsg(`Imported ${imported.length} FE article URLs from ${importFileName || "the pasted list"}. They are now ready for review in Step 3.`);
+    setSegmentArticles({ "uploaded-fe-urls": uniqueImported });
+    setSelectedArticleIds(Object.fromEntries(uniqueImported.map((article) => [article.id, true])));
+    setResults({});
+    setLoadMsg(`Imported ${uniqueImported.length} FE article URLs from ${importFileName || "the pasted list"}. They are ready for audit.`);
     setProgress("");
     setLoadingArticles(false);
     window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
@@ -1024,31 +781,12 @@ function App() {
   const selectedArticles = allLoadedArticles.filter((article) => selectedArticleIds[article.id]);
   const recommendationCap = clampRecommendationLimit(recommendationLimit, totalArticles || 50);
   const selectedRecommendationArticles = selectedArticles.slice(0, recommendationCap);
-  const segmentsWithArticles = Object.keys(segmentArticles).filter((sg) => segmentArticles[sg]?.length > 0);
-  const unsupportedSegments = Object.entries(segmentStatus).filter(([, v]) => v.type === "unsupported");
-  const emptySegments = Object.entries(segmentStatus).filter(([, v]) => v.type === "empty");
-  const filteredSegments = segments.filter((sg) => sg.toLowerCase().includes(segmentSearch.toLowerCase()));
-  const statusCounts = getStatusCounts(segmentStatus);
+  const resultEntries = Object.entries(results);
 
   async function analyzeAll() {
     const allArticles = selectedRecommendationArticles;
     if (!allArticles.length) {
-      setLoadMsg("Select at least one page before running recommendations.");
-      return;
-    }
-    if (analysisMode === "source") {
-      if (allArticles.length > SOURCE_AUDIT_LIMIT) {
-        setLoadMsg(`This source-only run has ${allArticles.length} articles. Reduce it to ${SOURCE_AUDIT_LIMIT} or fewer for browser reliability.`);
-        return;
-      }
-      setAnalyzing(true); setStep(4);
-      const sourceResults = {};
-      allArticles.forEach((article, index) => {
-        sourceResults[article.id] = buildSourceOnlyResult(article);
-        if ((index + 1) % 100 === 0) setProgress(`Pre-audited ${index + 1} of ${allArticles.length}...`);
-      });
-      setResults(sourceResults);
-      setProgress(""); setAnalyzing(false);
+      setLoadMsg("Select at least one page before running the audit.");
       return;
     }
     if (allArticles.length > MAX_ANALYSIS_ARTICLES) {
@@ -1057,7 +795,7 @@ function App() {
     }
     stopAnalysisRef.current = false;
     setAnalysisNotice("");
-    setAnalyzing(true); setStep(4);
+    setAnalyzing(true);
     const newResults = {};
     let consecutiveUpstreamErrors = 0;
     for (let i = 0; i < allArticles.length; i++) {
@@ -1068,24 +806,24 @@ function App() {
       setProgress(`Analyzing ${i + 1} of ${allArticles.length}...`);
       const requestStarted = Date.now();
       try {
-        newResults[allArticles[i].id] = await callAnalyzeApi(allArticles[i], analysisMode, costProfile, aiProvider, aiModel);
+        newResults[allArticles[i].id] = await callAnalyzeApi(allArticles[i], "framework", costProfile, aiProvider, aiModel);
         consecutiveUpstreamErrors = 0;
-      }
-      catch (e) {
+      } catch (e) {
         const message = String(e.message || e);
-        const isUpstream = /Upstream API error|Rate limit exceeded|Server misconfigured|Daily request cap reached/i.test(message);
-        newResults[allArticles[i].id] = buildClientFallbackResult(allArticles[i], analysisMode, message, aiProvider, aiModel, costProfile);
+        const isUpstream = /Analysis request failed|Upstream API error|Rate limit exceeded|Server misconfigured|Daily request cap reached/i.test(message);
+        newResults[allArticles[i].id] = { _failed: true, error: toUserMessage(message, "The audit could not be completed for this page.") };
         consecutiveUpstreamErrors = isUpstream ? consecutiveUpstreamErrors + 1 : 0;
         if (consecutiveUpstreamErrors >= MAX_CONSECUTIVE_UPSTREAM_ERRORS) {
           setResults({ ...newResults });
-          setAnalysisNotice(`Analysis stopped automatically after ${consecutiveUpstreamErrors} consecutive paid-model failures. The pages already completed in this run still include fallback recommendations for review.`);
+          setAnalysisNotice(`Analysis stopped automatically after ${consecutiveUpstreamErrors} consecutive model failures. Fix the provider issue, then retry the failed pages.`);
           break;
         }
       }
       setResults({ ...newResults });
       if (i < allArticles.length - 1) await wait(Math.max(0, ANALYSIS_INTERVAL_MS - (Date.now() - requestStarted)));
     }
-    setProgress(""); setAnalyzing(false);
+    setProgress("");
+    setAnalyzing(false);
   }
 
   async function retryFailed() {
@@ -1105,24 +843,24 @@ function App() {
       setProgress(`Retrying ${i + 1} of ${toRetry.length}...`);
       const requestStarted = Date.now();
       try {
-        newResults[toRetry[i].id] = await callAnalyzeApi(toRetry[i], analysisMode, costProfile, aiProvider, aiModel);
+        newResults[toRetry[i].id] = await callAnalyzeApi(toRetry[i], "framework", costProfile, aiProvider, aiModel);
         consecutiveUpstreamErrors = 0;
-      }
-      catch (e) {
+      } catch (e) {
         const message = String(e.message || e);
-        const isUpstream = /Upstream API error|Rate limit exceeded|Server misconfigured|Daily request cap reached/i.test(message);
-        newResults[toRetry[i].id] = buildClientFallbackResult(toRetry[i], analysisMode, message, aiProvider, aiModel, costProfile);
+        const isUpstream = /Analysis request failed|Upstream API error|Rate limit exceeded|Server misconfigured|Daily request cap reached/i.test(message);
+        newResults[toRetry[i].id] = { _failed: true, error: toUserMessage(message, "The audit could not be completed for this page.") };
         consecutiveUpstreamErrors = isUpstream ? consecutiveUpstreamErrors + 1 : 0;
         if (consecutiveUpstreamErrors >= MAX_CONSECUTIVE_UPSTREAM_ERRORS) {
           setResults({ ...newResults });
-          setAnalysisNotice(`Retry stopped automatically after ${consecutiveUpstreamErrors} consecutive paid-model failures.`);
+          setAnalysisNotice(`Retry stopped automatically after ${consecutiveUpstreamErrors} consecutive model failures.`);
           break;
         }
       }
       setResults({ ...newResults });
       if (i < toRetry.length - 1) await wait(Math.max(0, ANALYSIS_INTERVAL_MS - (Date.now() - requestStarted)));
     }
-    setProgress(""); setAnalyzing(false);
+    setProgress("");
+    setAnalyzing(false);
   }
 
   function stopAnalysis() {
@@ -1134,18 +872,31 @@ function App() {
     const allArticles = Object.values(segmentArticles).flat();
     return Object.entries(results).map(([id, r]) => {
       const a = allArticles.find((x) => x.id === id);
-      const top = r.findings?.[0];
       return {
-        segment: a?.segment, headline: a?.headline, url: a?.url, byline: a?.byline, publish_date: a?.publish_date,
-        verdict: r.verdict || r.overall_health,
-        top_finding: top ? `${top.severity === "red" ? "RED" : "YELLOW"} ${top.issue_name}: ${top.what_is_wrong}` : "None",
-        evidence: top?.evidence, why_it_hurts: top?.why_it_hurts, fix: top?.fix,
-        optimization_steps: top?.optimization_steps?.join(" | "), expected_improvement: top?.expected_improvement,
-        ymyl_score: r.ymyl_score ?? "", experience: r.experience ?? r.experience_score ?? "", expertise: r.expertise ?? "",
-        authoritativeness: r.authoritativeness ?? "", trustworthiness: r.trustworthiness ?? r.trust_score ?? "",
-        information_gain_score: r.information_gain_score ?? "", spam_risk: r.spam_risk ?? "",
-        word_count: r.word_count ?? "", source_signals: r.source_signals ?? "", expert_signals: r.expert_signals ?? "",
-        input_tokens: r._usage?.input_tokens ?? "", output_tokens: r._usage?.output_tokens ?? "",
+        segment: a?.segment,
+        headline: a?.headline,
+        url: a?.url,
+        byline: a?.byline,
+        publish_date: a?.publish_date,
+        verdict: r.page_classification || (r._failed ? "Retry" : ""),
+        top_finding: r.hcs_info_gain?.findings?.[0]?.title || r.error || "",
+        evidence: r.hcs_info_gain?.findings?.[0]?.evidence?.join(" | ") || "",
+        why_it_hurts: r.editorial_leadership_recommendation?.summary || r.error || "",
+        fix: r.editorial_leadership_recommendation?.immediate_action_required || "",
+        optimization_steps: r.editorial_leadership_recommendation?.next_steps?.join(" | ") || "",
+        expected_improvement: "",
+        ymyl_score: "",
+        experience: "",
+        expertise: "",
+        authoritativeness: "",
+        trustworthiness: "",
+        information_gain_score: "",
+        spam_risk: "",
+        word_count: "",
+        source_signals: "",
+        expert_signals: "",
+        input_tokens: r._usage?.input_tokens ?? "",
+        output_tokens: r._usage?.output_tokens ?? "",
       };
     });
   }
@@ -1156,31 +907,31 @@ function App() {
   function saveToMemory() {
     const rows = buildCsvRows();
     if (rows.length === 0) { setSavedMsg("Nothing to save yet."); return; }
-    const entry = { timestamp: new Date().toISOString(), mode: analysisMode, segments: [...new Set(rows.map((r) => r.segment))], articleCount: rows.length, rows };
+    const entry = { timestamp: new Date().toISOString(), mode: "framework", segments: [...new Set(rows.map((r) => r.segment))], articleCount: rows.length, rows };
     addSavedAnalysis(entry);
     setSavedAnalyses(getSavedAnalyses());
     setSavedMsg(`Saved ${rows.length} articles in this browser.`);
   }
 
-  function deleteSaved(timestamp) { deleteSavedAnalysis(timestamp); setSavedAnalyses(getSavedAnalyses()); }
+  function deleteSaved(timestamp) {
+    deleteSavedAnalysis(timestamp);
+    setSavedAnalyses(getSavedAnalyses());
+  }
 
-  const resultEntries = Object.entries(results);
-  const failedCount = Object.values(results).filter((r) => r._failed).length;
-  const sourceOnlyCount = Object.values(results).filter((r) => r.source_audit).length;
-  const segmentSummary = segmentsWithArticles.map((seg) => {
-    const arts = segmentArticles[seg] || [];
-    const segResults = arts.map((a) => results[a.id]).filter(Boolean);
-    const red = segResults.reduce((sum, r) => sum + (r.findings?.filter((f) => f.severity === "red").length || 0), 0);
-    const yellow = segResults.reduce((sum, r) => sum + (r.findings?.filter((f) => f.severity === "yellow").length || 0), 0);
-    return { seg, total: arts.length, analyzed: segResults.length, red, yellow };
-  });
+  const resultSummary = {
+    total: totalArticles,
+    analyzed: resultEntries.length,
+    keep: resultEntries.filter(([, r]) => r.page_classification === "Keep").length,
+    overhaul: resultEntries.filter(([, r]) => r.page_classification === "Overhaul").length,
+    deindex: resultEntries.filter(([, r]) => r.page_classification === "De-index").length,
+  };
 
   if (!authed) return <LoginScreen onSuccess={() => setAuthed(true)} />;
 
   return (
     <div>
       <div className="page-header">
-        <div><p className="login-kicker">SEO content operations</p><h1 style={st.h1}>FE Content Audit</h1><p style={st.subtitle}>A cleaner review workspace for SEO-led audits, editorial follow-up, segment scanning, and practical page-level recommendations.</p></div>
+        <div><p className="login-kicker">SEO content operations</p><h1 style={st.h1}>FE Content Audit</h1><p style={st.subtitle}>Upload FE URLs, run deep algorithm-quality audits, and review leadership-ready output in one consistent format.</p></div>
         <button style={st.btnOutline} onClick={() => { clearSession(); setAuthed(false); }}>Log out</button>
       </div>
 
@@ -1188,35 +939,41 @@ function App() {
         <div className="hero-panel">
           <div className="hero-inner">
             <p className="step-label">Audit summary</p>
-            <p style={{ fontSize: "30px", fontWeight: 700, margin: "0 0 8px", color: C.ink }}>Review the right FE pages faster.</p>
-            <p style={{ ...st.stepDesc, maxWidth: "560px", marginBottom: "18px" }}>Load segment pages, import your own URL sets, and keep recommendations readable enough for SEO planning and editorial action.</p>
+            <p style={{ fontSize: "30px", fontWeight: 700, margin: "0 0 8px", color: C.ink }}>Run deep audits on the exact pages you upload.</p>
+            <p style={{ ...st.stepDesc, maxWidth: "560px", marginBottom: "18px" }}>This version is focused on URL-based audits only. Upload FE URLs, review the imported pages, and generate structured leadership-ready analysis for each one.</p>
             <div className="dashboard-grid" style={{ marginBottom: 0 }}>
-              <div className="metric-card"><p className="metric-label">Segments</p><p className="metric-value">{segments.length}</p></div>
-              <div className="metric-card"><p className="metric-label">Loaded pages</p><p className="metric-value">{totalArticles}</p></div>
+              <div className="metric-card"><p className="metric-label">Uploaded pages</p><p className="metric-value">{totalArticles}</p></div>
               <div className="metric-card"><p className="metric-label">Reviewed</p><p className="metric-value">{resultEntries.length}</p></div>
-              <div className="metric-card"><p className="metric-label">Fallback review</p><p className="metric-value">{Object.values(results).filter((r) => r._fallback).length}</p></div>
+              <div className="metric-card"><p className="metric-label">Failed pages</p><p className="metric-value">{Object.values(results).filter((r) => r._failed).length}</p></div>
+              <div className="metric-card"><p className="metric-label">Saved runs</p><p className="metric-value">{savedAnalyses.length}</p></div>
             </div>
           </div>
         </div>
         <div className="panel" style={{ padding: "20px" }}>
-          <p className="step-label">Source health</p>
+          <p className="step-label">Audit controls</p>
           <div className="insight-list">
-            <div className="insight-row"><span>Ready segments</span><strong style={{ color: C.ink }}>{statusCounts.ready}</strong></div>
-            <div className="bar-track"><div className="bar-fill" style={{ width: `${segments.length ? Math.max(6, Math.round((statusCounts.ready / segments.length) * 100)) : 0}%` }} /></div>
-            <div className="insight-row"><span>No pages in selected range</span><strong style={{ color: C.warn }}>{statusCounts.empty}</strong></div>
-            <div className="insight-row"><span>Needs source review</span><strong style={{ color: "#ff8d82" }}>{statusCounts.unsupported}</strong></div>
-            <div className="insight-row"><span>Saved browser snapshots</span><strong style={{ color: C.ink }}>{savedAnalyses.length}</strong></div>
+            <div className="insight-row"><span>Audit format</span><strong style={{ color: C.ink }}>PRD-based</strong></div>
+            <div className="bar-track"><div className="bar-fill" style={{ width: `${totalArticles ? Math.max(6, Math.round((resultEntries.length / totalArticles) * 100)) : 0}%` }} /></div>
+            <div className="insight-row"><span>Provider</span><strong style={{ color: C.ink }}>{aiProvider === "anthropic" ? "Anthropic" : "OpenAI"}</strong></div>
+            <div className="insight-row"><span>Depth profile</span><strong style={{ color: C.ink }}>{costProfile === "standard" ? "Deep analysis" : "Lower cost"}</strong></div>
+            <div className="insight-row"><span>Fallbacks</span><strong style={{ color: C.ink }}>Disabled</strong></div>
           </div>
         </div>
       </div>
 
       <div style={st.card}>
         <p className="step-label">Step 1</p>
-        <p style={st.stepTitle}>Load segments</p>
-        <p style={st.stepDesc}>Load active FE segments from the connected WordPress source. The app handles the source request after login, then flags which segments are ready, empty, or need source review.</p>
-        <div style={{ marginTop: "12px" }}><button style={st.btnPrimary} onClick={loadSegments}>Load all segments</button></div>
-        {segments.length > 0 && <p style={{ fontSize: "13px", color: C.success, marginTop: "10px", fontWeight: 700 }}>Loaded {segments.length} active segments.</p>}
-        {loadMsg && step === 1 && <p style={{ fontSize: "13px", color: C.error, marginTop: "8px" }}>{loadMsg}</p>}
+        <p style={st.stepTitle}>Upload FE URLs</p>
+        <p style={st.stepDesc}>Paste FE URLs directly, or upload an Excel, CSV, TSV, or TXT file. This tool now works only on the URLs you provide.</p>
+        {loadMsg && <p style={{ fontSize: "13px", color: /loaded|imported|saved/i.test(loadMsg) ? C.success : C.error, marginTop: "10px", fontWeight: 600 }}>{loadMsg}</p>}
+        <textarea style={{ minHeight: "140px", marginBottom: "10px" }} value={importUrlsText} onChange={(e) => setImportUrlsText(e.target.value)} placeholder={"Examples:\nhttps://www.financialexpress.com/business/...-4312602/\nhttps://www.financialexpress.com/market/...-4312501/\n\nSpreadsheet or CSV header:\nurl"} />
+        <div className="toolbar-row">
+          <input type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,text/csv,text/tab-separated-values,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={handleImportFile} />
+          {importFileName && <span style={st.caption}>Loaded file: {importFileName}</span>}
+        </div>
+        <div style={{ marginTop: "10px" }}>
+          <button style={st.btnPrimary} onClick={importOwnUrls} disabled={loadingArticles}>{loadingArticles ? "Importing..." : "Import FE URLs"}</button>
+        </div>
       </div>
 
       <div style={st.cardLavender}>
@@ -1228,7 +985,7 @@ function App() {
           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
             {savedAnalyses.map((entry) => (
               <div className="saved-row" key={entry.timestamp} style={{ alignItems: "center", background: C.canvas, borderRadius: "8px", padding: "10px 14px", fontSize: "13px" }}>
-                <span><strong>{new Date(entry.timestamp).toLocaleString()}</strong> - {entry.articleCount} articles - {entry.segments.join(", ")}</span>
+                <span><strong>{new Date(entry.timestamp).toLocaleString()}</strong> - {entry.articleCount} articles</span>
                 <span className="saved-actions">
                   <button style={{ ...st.btnOutline, padding: "5px 14px", fontSize: "12px" }} onClick={() => exportSavedCsv(entry)}>Export CSV</button>
                   <button style={{ ...st.btnOutlineError, padding: "5px 14px", fontSize: "12px" }} onClick={() => deleteSaved(entry.timestamp)}>Delete</button>
@@ -1239,79 +996,11 @@ function App() {
         )}
       </div>
 
-      {step >= 2 && (
+      {totalArticles > 0 && (
         <div style={st.card}>
           <p className="step-label">Step 2</p>
-          <p style={st.stepTitle}>Load articles for each segment</p>
-          <p style={st.stepDesc}>Choose the date range, pick a valid segment, then load pages into the review queue. Segments with no pages or unstable source data are flagged before you start loading.</p>
-          <label style={{ display: "block", fontSize: "13px", fontWeight: 700, marginBottom: "12px" }}>Publication month<br /><select aria-label="Publication month" style={{ width: "100%", marginTop: "6px" }} value={selectedMonth} onChange={(e) => selectMonth(e.target.value)}>{monthOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-          <input style={{ width: "100%", marginBottom: "10px" }} placeholder="Search segments" value={segmentSearch} onChange={(e) => setSegmentSearch(e.target.value)} />
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "14px", maxHeight: "140px", overflowY: "auto" }}>
-            {filteredSegments.map((sg) => {
-              const status = segmentStatus[sg];
-              const isUnavailable = status?.type === "unsupported";
-              const isEmpty = status?.type === "empty";
-              const isLoaded = status?.type === "ok";
-              const pillStyle = sg === activeSegment ? st.pillTagActive : isUnavailable ? st.pillTagBad : isEmpty ? st.pillTagWarn : st.pillTag;
-              return <button key={sg} style={{ ...pillStyle, opacity: isUnavailable || isEmpty || checkingSegments ? 0.92 : 1 }} onClick={() => selectSegment(sg)} disabled={isUnavailable || isEmpty || checkingSegments}>{isUnavailable && "Unavailable "}{isEmpty && "No pages "}{isLoaded && "Loaded "}{sg}{segmentArticles[sg]?.length ? ` (${segmentArticles[sg].length})` : ""}</button>;
-            })}
-          </div>
-          {checkingSegments && <p style={{ ...st.caption, marginTop: "-4px", marginBottom: "10px" }}>Checking which segments have valid pages for this month/year. This now runs before page loading so unavailable categories are flagged early.</p>}
-          <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "10px" }}>
-            <span style={{ fontWeight: 700, fontSize: "14px" }}>Selected: {activeSegment || "none"}</span>
-            <label style={st.caption}>Pages to load per request:</label>
-            <input type="number" min="1" max={MAX_ARTICLES_PER_REQUEST} style={{ width: "74px" }} value={articlesPerPage} onChange={(e) => setArticlesPerPage(clampArticlesPerPage(e.target.value))} />
-          </div>
-          <p style={{ ...st.caption, marginTop: "-4px" }}>This setting controls how many pages are requested each time from the source. Use “Load all available pages” when you want the app to keep collecting the selected month in larger batches.</p>
-          {segmentStatus[activeSegment]?.type === "unsupported" && <div style={{ background: C.errorTint, color: C.error, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
-          {segmentStatus[activeSegment]?.type === "empty" && <div style={{ background: C.warnTint, color: C.warn, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
-          {segmentStatus[activeSegment]?.type === "end-of-range" && <div style={{ background: C.successTint, color: C.success, borderRadius: "8px", padding: "10px 14px", fontSize: "13px", marginBottom: "10px" }}>{segmentStatus[activeSegment].reason}</div>}
-          {activeSegment && (
-            <React.Fragment>
-              <p style={st.caption}>Next page: {Math.floor((segmentOffsets[activeSegment] || 0) / clampArticlesPerPage(articlesPerPage)) + 1}. Each page loads up to {clampArticlesPerPage(articlesPerPage)} articles from {monthOptions.find((option) => option.value === selectedMonth)?.label}.</p>
-              <p style={{ ...st.caption, marginBottom: "10px" }}>Source: connected WordPress feed. Page data is loaded inside the app after login.</p>
-              <div style={{ marginTop: "10px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                <button style={st.btnPrimary} onClick={loadArticlesForSegment} disabled={loadingArticles || checkingSegments}>Load next page</button>
-                <button style={st.btnOutline} onClick={loadAllPagesForSegment} disabled={loadingArticles || checkingSegments}>Load all available pages</button>
-              </div>
-            </React.Fragment>
-          )}
-          {loadMsg && <p style={{ fontSize: "13px", color: /loaded|added|saved/i.test(loadMsg) ? C.success : C.error, marginTop: "10px", fontWeight: 600 }}>{loadMsg}</p>}
-          <div style={{ marginTop: "18px", paddingTop: "16px", borderTop: `1px solid ${C.hairline}` }}>
-            <p style={{ fontSize: "14px", fontWeight: 700, margin: "0 0 6px" }}>Import your own FE URLs</p>
-            <p style={st.stepDesc}>Paste one Financial Express URL per line, or upload a CSV, TSV, or TXT file. Supported columns are <strong>url</strong> and optional <strong>segment</strong>. If your list is in Excel, export it as CSV first before uploading.</p>
-            <textarea style={{ minHeight: "96px", marginBottom: "10px" }} value={importUrlsText} onChange={(e) => setImportUrlsText(e.target.value)} placeholder={"Examples:\nhttps://www.financialexpress.com/business/...-4312602/\nmarkets,https://www.financialexpress.com/market/...-4312501/"} />
-            <div className="toolbar-row">
-              <input type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,text/csv,text/tab-separated-values,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={handleImportFile} />
-              {importFileName && <span style={st.caption}>Loaded file: {importFileName}</span>}
-            </div>
-            <div style={{ marginTop: "10px" }}>
-              <button style={st.btnOutline} onClick={importOwnUrls} disabled={loadingArticles || checkingSegments}>Import FE URLs</button>
-              {totalArticles > 0 && <button style={{ ...st.btnPrimary, marginLeft: "10px" }} onClick={() => setStep(3)}>Review loaded pages ({totalArticles})</button>}
-            </div>
-            {importedArticlesCount > 0 && <p style={{ fontSize: "13px", color: C.success, marginTop: "10px", fontWeight: 600 }}>{importedArticlesCount} imported URLs are ready in Step 3.</p>}
-          </div>
-          {unsupportedSegments.length > 0 && (
-            <div style={{ marginTop: "14px", borderTop: `1px solid ${C.hairline}`, paddingTop: "12px" }}>
-              <p style={{ fontSize: "13px", fontWeight: 700, color: C.error, margin: "0 0 6px" }}>Segments that could not be loaded for this month:</p>
-              {unsupportedSegments.map(([sg, v]) => <p key={sg} style={{ fontSize: "12px", color: C.error, margin: "0 0 4px" }}><strong>{sg}</strong>: {v.reason}</p>)}
-            </div>
-          )}
-          {emptySegments.length > 0 && (
-            <div style={{ marginTop: "14px", borderTop: `1px solid ${C.hairline}`, paddingTop: "12px" }}>
-              <p style={{ fontSize: "13px", fontWeight: 700, color: C.warn, margin: "0 0 6px" }}>Segments with no pages in this date range:</p>
-              {emptySegments.map(([sg, v]) => <p key={sg} style={{ fontSize: "12px", color: C.warn, margin: "0 0 4px" }}><strong>{sg}</strong>: {v.reason}</p>)}
-            </div>
-          )}
-          {segmentsWithArticles.length > 0 && <div style={{ marginTop: "14px" }}><button style={st.btnPrimary} onClick={() => setStep(3)}>Continue to review ({totalArticles} total)</button></div>}
-        </div>
-      )}
-
-      {step >= 3 && totalArticles > 0 && (
-        <div style={st.card}>
-          <p className="step-label">Step 3</p>
-          <p style={st.stepTitle}>Review before analysis</p>
-          <p style={st.stepDesc}>{totalArticles} pages are loaded across {segmentsWithArticles.length} segment(s). Choose which ones should receive recommendations, then decide whether to use the paid model review or the quick local screen.</p>
+          <p style={st.stepTitle}>Review imported pages</p>
+          <p style={st.stepDesc}>{totalArticles} uploaded page(s) are ready. Select the URLs you want to audit, then run the full PRD-based analysis.</p>
           <div className="toolbar-row" style={{ marginBottom: "12px" }}>
             <label style={{ fontSize: "13px", fontWeight: 700 }}>
               Pages to review
@@ -1334,125 +1023,124 @@ function App() {
               <span>Byline</span>
               <span>Published</span>
             </div>
-            {segmentsWithArticles.map((seg) => (
-              <div key={seg}>
-                <div style={{ background: "rgba(255,255,255,0.03)", padding: "10px 14px", fontSize: "13px", fontWeight: 700, color: C.ink }}>{seg} ({segmentArticles[seg].length})</div>
-                {segmentArticles[seg].map((a) => (
-                  <label key={a.id} className="article-table-row" style={{ fontSize: "13px", cursor: "pointer" }}>
-                    <input type="checkbox" checked={Boolean(selectedArticleIds[a.id])} onChange={(e) => toggleArticleSelection(a.id, e.target.checked)} style={{ marginTop: "2px" }} />
-                    <span>
-                      <strong style={{ color: C.ink }}>{a.headline}</strong>
-                      <span style={{ ...st.caption, display: "block", marginTop: "4px" }}>{a.segment}</span>
-                    </span>
-                    <span style={st.caption}>{a.byline || "Byline not available"}</span>
-                    <span style={st.caption}>{formatDate(a.publish_date)}</span>
-                  </label>
-                ))}
-              </div>
+            {allLoadedArticles.map((a) => (
+              <label key={a.id} className="article-table-row" style={{ fontSize: "13px", cursor: "pointer" }}>
+                <input type="checkbox" checked={Boolean(selectedArticleIds[a.id])} onChange={(e) => toggleArticleSelection(a.id, e.target.checked)} style={{ marginTop: "2px" }} />
+                <span>
+                  <strong style={{ color: C.ink }}>{a.headline}</strong>
+                  <span style={{ ...st.caption, display: "block", marginTop: "4px", wordBreak: "break-all" }}>{a.url}</span>
+                </span>
+                <span style={st.caption}>{a.byline || "Byline not available"}</span>
+                <span style={st.caption}>{formatDate(a.publish_date)}</span>
+              </label>
             ))}
           </div>
-          <div style={{ margin: "14px 0", padding: "12px 14px", background: C.lavender, borderRadius: "8px" }}>
-            <p style={{ fontSize: "13px", fontWeight: 700, margin: "0 0 8px" }}>Analysis mode:</p>
-            <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={analysisMode === "fe"} onChange={() => setAnalysisMode("fe")} /> API: FE YMYL/E-E-A-T Guidelines</label>
-            <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={analysisMode === "hcs"} onChange={() => setAnalysisMode("hcs")} /> API: Google HCS / Spam Audit</label>
-            <label style={{ fontSize: "13px" }}><input type="radio" checked={analysisMode === "source"} onChange={() => setAnalysisMode("source")} /> Quick local screen (no API cost)</label>
-          </div>
-          {analysisMode !== "source" && (
+          <div style={{ marginTop: "14px", padding: "12px 14px", background: C.lavender, borderRadius: "8px" }}>
+            <p style={{ fontSize: "13px", fontWeight: 700, margin: "0 0 8px" }}>Audit settings</p>
             <div style={{ marginBottom: "12px" }}>
               <p style={{ fontSize: "13px", fontWeight: 700, margin: "0 0 8px" }}>AI provider:</p>
               <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={aiProvider === "anthropic"} onChange={() => changeAiProvider("anthropic")} /> Anthropic API</label>
               <label style={{ fontSize: "13px" }}><input type="radio" checked={aiProvider === "openai"} onChange={() => changeAiProvider("openai")} /> OpenAI API</label>
             </div>
-          )}
-          {analysisMode !== "source" && (
             <div style={{ marginBottom: "12px" }}>
-              <p style={{ fontSize: "13px", fontWeight: 700, margin: "0 0 8px" }}>Cost profile:</p>
-              <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={costProfile === "low"} onChange={() => changeCostProfile("low")} /> Lower cost</label>
-              <label style={{ fontSize: "13px" }}><input type="radio" checked={costProfile === "standard"} onChange={() => changeCostProfile("standard")} /> Higher quality</label>
+              <p style={{ fontSize: "13px", fontWeight: 700, margin: "0 0 8px" }}>Depth profile:</p>
+              <label style={{ fontSize: "13px", marginRight: "20px" }}><input type="radio" checked={costProfile === "standard"} onChange={() => changeCostProfile("standard")} /> Deep analysis</label>
+              <label style={{ fontSize: "13px" }}><input type="radio" checked={costProfile === "low"} onChange={() => changeCostProfile("low")} /> Lower cost</label>
             </div>
-          )}
-          {analysisMode !== "source" && (
-            <div style={{ marginBottom: "12px" }}>
-              <label style={{ display: "block", fontSize: "13px", fontWeight: 700, marginBottom: "8px" }}>
-                {aiProvider === "anthropic" ? "Claude model" : "OpenAI model"}
-                <br />
-                <select aria-label="AI model" style={{ width: "100%", marginTop: "6px" }} value={aiModel} onChange={(e) => setAiModel(e.target.value)}>
-                  {(AI_PROVIDER_OPTIONS[aiProvider] || []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-            </div>
-          )}
-          <p style={st.caption}>{analysisMode === "source" ? `This mode does not call Claude or OpenAI. ${selectedRecommendationArticles.length} selected pages will run in the quick local screen.` : `Current provider: ${aiProvider === "anthropic" ? "Anthropic" : "OpenAI"}. Selected model: ${aiModel}. Paid usage depends on page length and the selected model. If the provider starts failing, the run stops automatically and completed pages still get fallback recommendations for review.`}</p>
+            <label style={{ display: "block", fontSize: "13px", fontWeight: 700, marginBottom: "8px" }}>
+              {aiProvider === "anthropic" ? "Claude model" : "OpenAI model"}
+              <br />
+              <select aria-label="AI model" style={{ width: "100%", marginTop: "6px" }} value={aiModel} onChange={(e) => setAiModel(e.target.value)}>
+                {(AI_PROVIDER_OPTIONS[aiProvider] || []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+          </div>
+          <p style={st.caption}>This workflow uses only live model analysis. If the provider fails or does not return the required format, that page is marked for retry instead of receiving a fallback recommendation.</p>
           <div className="toolbar-row">
-            <button style={st.btnPrimary} onClick={analyzeAll} disabled={analyzing || checkingSegments}>{analyzing ? "Review in progress..." : `Run recommendations for ${selectedRecommendationArticles.length} pages`}</button>
+            <button style={st.btnPrimary} onClick={analyzeAll} disabled={analyzing}>{analyzing ? "Audit in progress..." : `Run audit for ${selectedRecommendationArticles.length} pages`}</button>
             {analyzing && <button style={st.btnOutlineError} onClick={stopAnalysis}>Stop analysis</button>}
           </div>
         </div>
       )}
 
-      {step >= 4 && (
+      {resultEntries.length > 0 && (
         <div style={st.card}>
-          <p className="step-label">Step 4</p>
+          <p className="step-label">Step 3</p>
           <div className="result-header" style={{ alignItems: "center", gap: "12px", marginBottom: "8px" }}>
-            <p style={st.stepTitle}>Recommendation output</p>
+            <p style={st.stepTitle}>Audit output</p>
             {analyzing && <button style={st.btnOutlineError} onClick={stopAnalysis}>Stop analysis</button>}
           </div>
           {analyzing && <p style={{ fontSize: "14px", color: C.inkMute, marginTop: 0 }}>{progress}</p>}
           {analysisNotice && <p style={{ fontSize: "13px", color: C.warn, margin: "0 0 12px", fontWeight: 600 }}>{analysisNotice}</p>}
-          {segmentSummary.length > 0 && (
-            <div style={{ marginBottom: "16px" }}>
-              {segmentSummary.map((sm) => (
-                <div key={sm.seg} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: C.cream, borderRadius: "8px", marginBottom: "6px", fontSize: "13px" }}>
-                  <span style={{ fontWeight: 700 }}>{sm.seg}</span>
-                  <span style={st.caption}>{sm.analyzed}/{sm.total} analysed</span>
-                  <span>{sm.red > 0 && <span style={{ color: C.error, fontWeight: 700, marginRight: "10px" }}>{sm.red} red</span>}{sm.yellow > 0 && <span style={{ color: C.warn, fontWeight: 700 }}>{sm.yellow} yellow</span>}{sm.analyzed > 0 && sm.red === 0 && sm.yellow === 0 && <span style={{ color: C.success }}>Clear</span>}</span>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: C.cream, borderRadius: "8px", marginBottom: "16px", fontSize: "13px", flexWrap: "wrap", gap: "10px" }}>
+            <span style={{ fontWeight: 700 }}>Uploaded URL audit</span>
+            <span style={st.caption}>{resultSummary.analyzed}/{resultSummary.total} analysed</span>
+            <span>{resultSummary.deindex > 0 && <span style={{ color: C.error, fontWeight: 700, marginRight: "10px" }}>{resultSummary.deindex} de-index</span>}{resultSummary.overhaul > 0 && <span style={{ color: C.warn, fontWeight: 700, marginRight: "10px" }}>{resultSummary.overhaul} overhaul</span>}{resultSummary.keep > 0 && <span style={{ color: C.success }}>{resultSummary.keep} keep</span>}</span>
+          </div>
+          <div style={{ marginBottom: "14px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            <button style={st.btnOutline} onClick={exportCsv}>Export CSV</button>
+            <button style={st.btnPrimary} onClick={saveToMemory}>Save analysis</button>
+            {Object.values(results).some((r) => r._failed) && <button style={st.btnOutlineError} onClick={retryFailed} disabled={analyzing}>Retry {Object.values(results).filter((r) => r._failed).length} failed</button>}
+          </div>
+          {resultEntries.map(([id, r]) => {
+            const a = Object.values(segmentArticles).flat().find((x) => x.id === id);
+            const badgeLabel = r.page_classification || (r._failed ? "Retry" : "");
+            const isBad = badgeLabel === "De-index";
+            const isMid = badgeLabel === "Overhaul" || badgeLabel === "Retry";
+            return (
+              <div key={id} style={{ border: `1px solid ${C.hairline}`, borderRadius: "12px", padding: "14px 16px", marginBottom: "10px" }}>
+                <div className="result-header">
+                  <p style={{ fontWeight: 700, fontSize: "14px", margin: 0 }}>{a?.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: C.linkBlue }}>{a.headline}</a> : a?.headline}</p>
+                  <span style={{ fontSize: "12px", padding: "3px 12px", borderRadius: "90px", background: isBad ? C.errorTint : isMid ? C.warnTint : C.successTint, color: isBad ? C.error : isMid ? C.warn : C.success, fontWeight: 700, whiteSpace: "nowrap" }}>{badgeLabel}</span>
                 </div>
-              ))}
-            </div>
-          )}
-          {resultEntries.length > 0 && (
-            <React.Fragment>
-              <div style={{ marginBottom: "14px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                <button style={st.btnOutline} onClick={exportCsv}>Export CSV</button>
-                <button style={st.btnPrimary} onClick={saveToMemory}>Save analysis</button>
-                {Object.values(results).some((r) => r._failed) && <button style={st.btnOutlineError} onClick={retryFailed} disabled={analyzing}>Retry {Object.values(results).filter((r) => r._failed).length} failed</button>}
-              </div>
-              {resultEntries.map(([id, r]) => {
-                const a = Object.values(segmentArticles).flat().find((x) => x.id === id);
-                const badgeLabel = r.verdict || r.overall_health;
-                const isBad = badgeLabel === "Dead Weight" || badgeLabel === "Weak";
-                const isMid = badgeLabel === "Borderline" || badgeLabel === "Needs Work";
-                return (
-                  <div key={id} style={{ border: `1px solid ${C.hairline}`, borderRadius: "12px", padding: "14px 16px", marginBottom: "10px" }}>
-                    <div className="result-header">
-                      <p style={{ fontWeight: 700, fontSize: "14px", margin: 0 }}>{a?.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: C.linkBlue }}>{a.headline}</a> : a?.headline}</p>
-                      <span style={{ fontSize: "12px", padding: "3px 12px", borderRadius: "90px", background: isBad ? C.errorTint : isMid ? C.warnTint : C.successTint, color: isBad ? C.error : isMid ? C.warn : C.success, fontWeight: 700, whiteSpace: "nowrap" }}>{badgeLabel}</span>
-                    </div>
-                    <p style={{ ...st.caption, margin: "4px 0 10px" }}>{a?.segment} - {a?.byline || "No byline"} - {formatDate(a?.publish_date)}</p>
-                    {r._fallback && <div className="status-chip" style={{ background: C.warnTint, color: C.warn, marginBottom: "10px" }}>Review suggested: this recommendation used the product's fallback rules.</div>}
-                    {r.source_audit && <p style={st.caption}>Source-only pre-audit. No Claude tokens used.</p>}
-                    {r._model && <p style={st.caption}>Model used: {r._model}{r._provider ? ` via ${r._provider}` : ""}{r._cost_profile ? ` (${r._cost_profile} cost profile)` : ""}</p>}
-                    {r._usage && <p style={st.caption}>API usage: {r._usage.input_tokens || 0} input tokens, {r._usage.output_tokens || 0} output tokens.</p>}
-                    {r.spam_risk && r.spam_risk !== "none" && <p style={{ fontSize: "12px", color: C.error, fontWeight: 700, margin: "0 0 8px" }}>Spam risk: {r.spam_risk}</p>}
-                    {r.findings?.map((f, i) => (
-                      <div key={i} style={{ fontSize: "13px", marginBottom: "8px", paddingLeft: "10px", borderLeft: `3px solid ${f.severity === "red" ? C.error : C.warn}` }}>
-                        <strong>{f.issue_name}</strong><br /><strong>Evidence:</strong> {f.evidence}<br />{f.what_is_wrong}<br /><span style={{ color: C.inkMute }}>{f.why_it_hurts}</span><br /><strong>How to improve:</strong><ol style={{ margin: "6px 0 4px", paddingLeft: "20px" }}>{(f.optimization_steps || [f.fix]).map((step, stepIndex) => <li key={stepIndex}>{step}</li>)}</ol>{f.expected_improvement && <span style={{ color: C.inkMute }}><strong>Expected improvement:</strong> {f.expected_improvement}</span>}
+                <p style={{ ...st.caption, margin: "4px 0 10px" }}>{a?.byline || "No byline"} - {formatDate(a?.publish_date)}</p>
+                {r._model && <p style={st.caption}>Model used: {r._model}{r._provider ? ` via ${r._provider}` : ""}{r._cost_profile ? ` (${r._cost_profile} cost profile)` : ""}</p>}
+                {r._usage && <p style={st.caption}>API usage: {r._usage.input_tokens || 0} input tokens, {r._usage.output_tokens || 0} output tokens.</p>}
+                {r._failed ? (
+                  <div style={{ fontSize: "13px", marginTop: "10px", color: C.error }}>
+                    <strong>Analysis could not complete.</strong><br />{r.error}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: "13px", lineHeight: 1.7 }}>
+                    <p style={{ fontWeight: 700, margin: "14px 0 6px" }}>1. THE HELPFUL CONTENT SYSTEM (HCS) & INFORMATION GAIN</p>
+                    <p style={{ margin: "0 0 8px" }}>{r.hcs_info_gain?.mandate}</p>
+                    {(r.hcs_info_gain?.findings || []).map((finding, i) => (
+                      <div key={`hcs-${i}`} style={{ marginBottom: "10px" }}>
+                        <strong>{finding.title}:</strong> {finding.analysis}
+                        <div style={{ ...st.caption, marginTop: "4px" }}>Evidence: {finding.evidence.join(" | ")}</div>
                       </div>
                     ))}
-                    {r.bottom_line && <p style={{ fontSize: "13px", fontStyle: "italic", marginTop: "8px" }}>{r.bottom_line}</p>}
-                    <div style={{ display: "flex", gap: "12px", marginTop: "10px", fontSize: "12px", color: C.inkMute }}>
-                      {r.ymyl_score !== undefined && <span>YMYL {r.ymyl_score}</span>}
-                      {r.experience !== undefined && <span>Experience {r.experience}</span>}
-                      {r.expertise !== undefined && <span>Expertise {r.expertise}</span>}
-                      {r.authoritativeness !== undefined && <span>Authority {r.authoritativeness}</span>}
-                      {r.trustworthiness !== undefined && <span>Trust {r.trustworthiness}</span>}
-                      {r.information_gain_score !== undefined && <span>Information gain {r.information_gain_score}</span>}
-                    </div>
+
+                    <p style={{ fontWeight: 700, margin: "18px 0 6px" }}>2. E-E-A-T (EXPERIENCE, EXPERTISE, AUTHORITATIVENESS, TRUST)</p>
+                    <p style={{ margin: "0 0 8px" }}>{r.eeat_trust?.mandate}</p>
+                    {(r.eeat_trust?.findings || []).map((finding, i) => (
+                      <div key={`eeat-${i}`} style={{ marginBottom: "10px" }}>
+                        <strong>{finding.title}:</strong> {finding.analysis}
+                        <div style={{ ...st.caption, marginTop: "4px" }}>Evidence: {finding.evidence.join(" | ")}</div>
+                      </div>
+                    ))}
+
+                    <p style={{ fontWeight: 700, margin: "18px 0 6px" }}>3. GOOGLE SPAM POLICIES (SCALED & THIN CONTENT ABUSE)</p>
+                    <p style={{ margin: "0 0 8px" }}>{r.spam_scaled_abuse?.mandate}</p>
+                    {(r.spam_scaled_abuse?.findings || []).map((finding, i) => (
+                      <div key={`spam-${i}`} style={{ marginBottom: "10px" }}>
+                        <strong>{finding.title}:</strong> {finding.analysis}
+                        <div style={{ ...st.caption, marginTop: "4px" }}>Evidence: {finding.evidence.join(" | ")}</div>
+                      </div>
+                    ))}
+
+                    <p style={{ fontWeight: 700, margin: "18px 0 6px" }}>RECOMMENDATION FOR EDITORIAL LEADERSHIP</p>
+                    <p style={{ margin: "0 0 8px" }}>{r.editorial_leadership_recommendation?.summary}</p>
+                    <p style={{ margin: "0 0 6px" }}><strong>Immediate Action Required:</strong> {r.editorial_leadership_recommendation?.immediate_action_required}</p>
+                    <p style={{ margin: "0 0 4px" }}><strong>If Rewriting:</strong></p>
+                    <ol style={{ margin: "6px 0 0", paddingLeft: "20px" }}>
+                      {(r.editorial_leadership_recommendation?.next_steps || []).map((step, index) => <li key={index}>{step}</li>)}
+                    </ol>
                   </div>
-                );
-              })}
-            </React.Fragment>
-          )}
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

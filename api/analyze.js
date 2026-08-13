@@ -6,46 +6,64 @@ import { createClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
 import { verifyToken } from "./_verifyToken.js";
 
-const SYSTEM_PROMPT_FE = `You are the FE Content Health Agent, a senior SEO & Content Head reviewing Financial Express articles against 13 YMYL/E-E-A-T guidelines. The primary user is SEO, and the secondary user is editorial. Score ONLY on what is actually present in the article given. Never guess. Every finding must reference something specific and real from THIS article.
+const SYSTEM_PROMPT_AUDIT = `You are the Elite SEO Content Quality & Core Algorithm Auditor for Financial Express. The primary audience is SEO leadership, and the secondary audience is editorial leadership. Evaluate ONLY what is actually present in the supplied article. Never guess, never flatter, never hallucinate, and never use outside conversational context.
 
-GOOGLE UPDATES CONTEXT: E-E-A-T now applies broadly (Dec 2025/Mar 2026 core updates). YMYL expanded to Government/Civics/Society (Sept 2025). An author bio alone is not enough - body content must demonstrate expertise. First-hand experience is now decisive (May 2026). Scaled/duplicate content is targeted (Mar 2026 Spam Update). Never frame findings as "AI-written" - frame as "lacks first-hand expertise/sourcing."
+GOOGLE CONTEXT: Helpful Content System is integrated into core ranking. Spam enforcement heavily targets scaled content abuse, site reputation abuse, and unoriginal aggregation. Your job is to identify whether the page is original, useful, trustworthy, and safe for the wider domain quality signal.
 
-GUIDELINES: G1 reader wellbeing, G2 verifiable expertise, G3 attribution/fact-check, G4 source quality (min 1 expert unless override/exception), G5 disclaimers, G6 safety/risk framing, G7 accurate headlines, G8 explainers need expert weigh-in, G9 no clickbait/curiosity-gap, G10 no unsourced trend-chasing, G11 no repeated/duplicate content, G12 comparisons need expert opinion, G13 unqualified advice-giving is HARD FAIL always red.
+NON-NEGOTIABLE RULES:
+1. Every criticism must be grounded in the supplied article.
+2. Use specific evidence excerpts copied from the supplied headline, subheading, byline, or body text.
+3. Do not claim a missing source, missing expertise, or missing case study unless the article truly does not show it.
+4. Use a professional, leadership-ready tone. Critical is allowed. Insulting is forbidden.
+5. Do not mention rankings, traffic gains, or external FE history unless it directly follows from the supplied PRD logic.
+6. Output must match the JSON schema exactly. No markdown fences. No text outside JSON.
 
-Score E-E-A-T (Experience, Expertise, Authoritativeness, Trustworthiness) independently 1-5.
-
-GROUNDING RULES: Never invent a fact, quote, source, performance result, or ranking outcome. Every finding must include a short verbatim evidence excerpt copied from the supplied headline, subheading, byline, or body text. If the article does not contain evidence for a concern, do not report that concern. Recommendations must be plain, specific actions that follow directly from the evidence and can be understood by both SEO and editorial users. Do not promise traffic or ranking gains.
-
-CRITICAL LENGTH LIMIT: Respond with ONLY the JSON below, under 800 words total. AT MOST 2 findings. Keep every field concise. No markdown fences, no text outside the JSON object.
-
+RETURN THIS EXACT JSON SHAPE:
 {
-  "overall_health": "Strong|Needs Work|Weak",
-  "findings": [{"severity":"red|yellow","issue_name":"short name","evidence":"short verbatim excerpt from this article","what_is_wrong":"ONE sentence, specific to this article","why_it_hurts":"ONE short sentence","fix":"ONE short concrete action","optimization_steps":["plain-language action 1","plain-language action 2"],"expected_improvement":"ONE cautious sentence describing the content-quality benefit, without promising rankings"}],
-  "whats_working": ["one short strength, or omit if none"],
-  "bottom_line": "ONE sentence verdict",
-  "ymyl_score":1-5,"experience":1-5,"expertise":1-5,"authoritativeness":1-5,"trustworthiness":1-5,
-  "flagged_guidelines": ["G1","G9"]
-}`;
+  "page_classification": "Keep|Overhaul|De-index",
+  "hcs_info_gain": {
+    "mandate": "Google's mandate: Content must provide original reporting, research, or analysis, and must not leave users feeling they need to search again.",
+    "findings": [
+      {
+        "title": "short title",
+        "analysis": "2-4 sentence grounded analysis",
+        "evidence": ["short verbatim excerpt 1", "short verbatim excerpt 2"]
+      }
+    ]
+  },
+  "eeat_trust": {
+    "mandate": "Google's mandate: High-quality YMYL (Your Money or Your Life) content must be written by experts, cite authoritative primary sources, and demonstrate first-hand experience.",
+    "findings": [
+      {
+        "title": "short title",
+        "analysis": "2-4 sentence grounded analysis",
+        "evidence": ["short verbatim excerpt 1", "short verbatim excerpt 2"]
+      }
+    ]
+  },
+  "spam_scaled_abuse": {
+    "mandate": "Google's mandate: Pages must not be generated at scale to manipulate search rankings, nor should they lack depth, real examples, or specific data points.",
+    "findings": [
+      {
+        "title": "short title",
+        "analysis": "2-4 sentence grounded analysis",
+        "evidence": ["short verbatim excerpt 1", "short verbatim excerpt 2"]
+      }
+    ]
+  },
+  "editorial_leadership_recommendation": {
+    "summary": "2-4 sentence leadership-ready summary",
+    "immediate_action_required": "short action line",
+    "next_steps": ["clear next step 1", "clear next step 2", "clear next step 3"]
+  }
+}
 
-const SYSTEM_PROMPT_HCS = `You are an elite Google Search Quality Rater and Senior Technical SEO Auditor. The primary user is SEO, and the secondary user is editorial. Ruthlessly evaluate this webpage against Google's 2025-2026 Core Ranking Systems, where the Helpful Content System (HCS) is integrated into core ranking and spam policies heavily target scaled content, site reputation abuse, and unoriginal aggregation. Do not flatter the text - if it is generic, score it ruthlessly. Never guess about content not shown to you.
-
-CONTEXT: FE's traffic dropped after the Aug 2025 core update, partially recovered Sep-Oct, then collapsed after the Dec 2025 core update. Some sections down 70-80%. Both Google Search and Discover collapsed. Your job is to identify "Dead Weight" content dragging down sitewide quality.
-
-EVALUATE ON: 1) HCS & Information Gain - original reporting/analysis vs summarizing others; search-engine-first content; fluff/padding. 2) E-E-A-T - first-hand experience vs generic guide; YMYL claims backed by primary-source citations, objective tone; curiosity-gap headlines. 3) SPAM POLICIES - scaled/AI-generated feel adding little value; thin content lacking depth/data.
-
-GROUNDING RULES: Never invent a fact, quote, source, performance result, or ranking outcome. Every finding must include a short verbatim evidence excerpt copied from the supplied headline, subheading, byline, or body text. If the article does not contain evidence for a concern, do not report that concern. Recommendations must be plain, specific actions that follow directly from the evidence and can be understood by both SEO and editorial users. Do not promise traffic or ranking gains.
-
-CRITICAL LENGTH LIMIT: Respond with ONLY the JSON below, under 800 words total. AT MOST 2 findings. Keep every field concise. No markdown fences, no text outside the JSON.
-
-{
-  "verdict": "Dead Weight|Borderline|Healthy",
-  "information_gain_score": 1-5,
-  "experience_score": 1-5,
-  "trust_score": 1-5,
-  "spam_risk": "none|scaled-content-abuse|thin-content|syndicated-aggregation",
-  "findings": [{"severity":"red|yellow","issue_name":"short name","evidence":"short verbatim excerpt from this article","what_is_wrong":"ONE sentence, specific to this article","why_it_hurts":"ONE sentence tied to HCS/E-E-A-T/spam policy","fix":"ONE concrete action","optimization_steps":["plain-language action 1","plain-language action 2"],"expected_improvement":"ONE cautious sentence describing the content-quality benefit, without promising rankings"}],
-  "bottom_line": "ONE sentence: is this Dead Weight and why"
-}`;
+QUALITY BAR:
+- Each section must have 2 to 4 findings.
+- Each finding must be materially different.
+- Prefer depth over filler.
+- If the article is strong in a section, say so directly and explain why with evidence.
+- Use plain business language, not vague SEO jargon.`;
 
 let supabase = null;
 if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -63,166 +81,6 @@ const DEFAULT_OPENAI_LOW_COST_MODEL = process.env.OPENAI_LOW_COST_MODEL || "gpt-
 
 function stripToPlainText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
-}
-
-function safeSentence(value, fallback) {
-  const cleaned = stripToPlainText(value);
-  if (!cleaned) return fallback;
-  return cleaned.length > 220 ? `${cleaned.slice(0, 217)}...` : cleaned;
-}
-
-function articleEvidence(article, maxLength = 160) {
-  const candidates = [
-    article.subheading,
-    article.headline,
-    String(article.body_text || "").split(/[.!?]\s/)[0],
-    String(article.body_text || "").slice(0, maxLength),
-  ].map((item) => stripToPlainText(item)).filter(Boolean);
-  const chosen = candidates[0] || "The page content was loaded successfully.";
-  return chosen.length > maxLength ? `${chosen.slice(0, maxLength - 3)}...` : chosen;
-}
-
-function countMatches(text, regex) {
-  return (String(text || "").match(regex) || []).length;
-}
-
-function clampScore(value, minimum = 1, maximum = 5) {
-  return Math.max(minimum, Math.min(maximum, value));
-}
-
-function buildFallbackAnalysis(article, mode, reason, meta = {}) {
-  const bodyText = String(article.body_text || "").slice(0, MAX_BODY_TEXT_CHARS);
-  const headline = stripToPlainText(article.headline);
-  const byline = stripToPlainText(article.byline);
-  const evidence = articleEvidence(article);
-  const wordCount = bodyText.trim() ? bodyText.trim().split(/\s+/).length : 0;
-  const sourceSignals = countMatches(bodyText, /https?:\/\/|according to|said|told|data|report|survey|filing|statement|exchange|ministry|rbi|sebi|nse|bse/gi);
-  const expertSignals = countMatches(bodyText, /said|told|according to|analyst|expert|economist|official|spokesperson|ceo|cfo|md|founder|research head/gi);
-  const numericSignals = countMatches(bodyText, /\b\d+(?:\.\d+)?%?\b/g);
-  const hasByline = Boolean(byline);
-  const fallbackNote = safeSentence(reason, "The selected model did not return a usable recommendation, so this page was assessed using the product's built-in editorial rules.");
-  const findings = [];
-
-  if (wordCount < 350) {
-    findings.push({
-      severity: "red",
-      issue_name: "Needs more useful depth",
-      evidence,
-      what_is_wrong: `The page currently has about ${wordCount} words, which is light for a content-improvement review.`,
-      why_it_hurts: "Readers may not get enough context, proof points, or next-step guidance from the page.",
-      fix: "Expand the article with more concrete context, named sourcing, and a practical takeaway section.",
-      optimization_steps: [
-        "Add one short background section explaining why this update matters.",
-        "Add at least one named source, quote, or official data point.",
-        "End with a clear takeaway for readers in simple language."
-      ],
-      expected_improvement: "A fuller article should make the page more useful, clearer, and easier for readers to trust.",
-    });
-  }
-
-  if (sourceSignals < 2 || expertSignals < 1) {
-    findings.push({
-      severity: findings.length ? "yellow" : "red",
-      issue_name: "Stronger sourcing is needed",
-      evidence,
-      what_is_wrong: "The page does not show enough visible sourcing, expert context, or supporting evidence for its main claims.",
-      why_it_hurts: "Important business and YMYL-style pages are more useful when claims are clearly supported.",
-      fix: "Add named attribution, official data, and one expert or company voice directly tied to the main claim.",
-      optimization_steps: [
-        "Identify the page's main claim and support it with one named source.",
-        "Add one expert, company, or official quote that explains the claim.",
-        "Include one concrete figure, date, or document reference where possible."
-      ],
-      expected_improvement: "Clearer sourcing should make the page feel more credible and more actionable for readers.",
-    });
-  }
-
-  if (!hasByline && findings.length < 2) {
-    findings.push({
-      severity: "yellow",
-      issue_name: "Author detail should be clearer",
-      evidence: headline || evidence,
-      what_is_wrong: "The loaded page does not include a strong visible byline or author context in the current payload.",
-      why_it_hurts: "Readers benefit from knowing who reported or reviewed the content.",
-      fix: "Confirm the byline and add stronger author context or profile linkage in the publishing workflow.",
-      optimization_steps: [
-        "Confirm the correct byline in the CMS.",
-        "Link the byline to an author profile where available."
-      ],
-      expected_improvement: "Clearer authorship can improve trust and accountability for the page.",
-    });
-  }
-
-  if (!findings.length) {
-    findings.push({
-      severity: "yellow",
-      issue_name: "Add one stronger proof point",
-      evidence,
-      what_is_wrong: fallbackNote,
-      why_it_hurts: "Without one stronger proof point, the page may feel less complete than it could be.",
-      fix: "Add one concrete data point, source, or explanatory section tied to the main reader question.",
-      optimization_steps: [
-        "Add one supporting fact, number, or official reference.",
-        "Explain the practical reader impact in one short paragraph."
-      ],
-      expected_improvement: "A clearer proof point should make the page more informative and more useful for readers.",
-    });
-  }
-
-  const limitedFindings = findings.slice(0, 2);
-
-  if (mode === "hcs") {
-    const informationGainScore = clampScore(wordCount >= 700 ? 4 : wordCount >= 450 ? 3 : 2);
-    const experienceScore = clampScore(expertSignals >= 2 ? 4 : expertSignals >= 1 ? 3 : 2);
-    const trustScore = clampScore((hasByline ? 1 : 0) + (sourceSignals >= 2 ? 2 : 1) + (numericSignals >= 3 ? 1 : 0), 2, 5);
-    const verdict = limitedFindings.some((item) => item.severity === "red") ? "Dead Weight" : "Borderline";
-    return {
-      verdict,
-      information_gain_score: informationGainScore,
-      experience_score: experienceScore,
-      trust_score: trustScore,
-      spam_risk: wordCount < 350 ? "thin-content" : "none",
-      findings: limitedFindings,
-      bottom_line: verdict === "Dead Weight"
-        ? "This page needs stronger depth, sourcing, and explanation before it can be relied on as a strong content asset."
-        : "This page has a usable base, but it still needs stronger proof points and clearer reader value.",
-      _fallback: true,
-      _fallback_reason: fallbackNote,
-      _usage: meta.usage || null,
-      _model: meta.model || "built-in-fallback",
-      _cost_profile: meta.costProfile || null,
-      _provider: meta.provider || "fallback",
-      _config_signal: meta.configSignal || null,
-    };
-  }
-
-  const ymylScore = clampScore(wordCount >= 700 ? 4 : wordCount >= 450 ? 3 : 2);
-  const experience = clampScore(expertSignals >= 2 ? 4 : expertSignals >= 1 ? 3 : 2);
-  const expertise = clampScore(sourceSignals >= 3 ? 4 : sourceSignals >= 2 ? 3 : 2);
-  const authoritativeness = clampScore((hasByline ? 1 : 0) + (sourceSignals >= 2 ? 2 : 1), 2, 5);
-  const trustworthiness = clampScore((hasByline ? 1 : 0) + (numericSignals >= 3 ? 1 : 0) + (sourceSignals >= 2 ? 2 : 1), 2, 5);
-  const overallHealth = limitedFindings.some((item) => item.severity === "red") ? "Weak" : "Needs Work";
-  return {
-    overall_health: overallHealth,
-    findings: limitedFindings,
-    whats_working: sourceSignals >= 2 ? ["The page already includes some attributed or factual support."] : [],
-    bottom_line: overallHealth === "Weak"
-      ? "This page needs stronger sourcing, depth, and practical explanation before it can be treated as a strong content asset."
-      : "This page has a workable base, but it still needs clearer proof points and reader guidance.",
-    ymyl_score: ymylScore,
-    experience,
-    expertise,
-    authoritativeness,
-    trustworthiness,
-    flagged_guidelines: limitedFindings.some((item) => item.issue_name.includes("sourcing")) ? ["G2", "G3", "G4"] : ["G1", "G2"],
-    _fallback: true,
-    _fallback_reason: fallbackNote,
-    _usage: meta.usage || null,
-    _model: meta.model || "built-in-fallback",
-    _cost_profile: meta.costProfile || null,
-    _provider: meta.provider || "fallback",
-    _config_signal: meta.configSignal || null,
-  };
 }
 
 function fingerprintKey(apiKey) {
@@ -318,26 +176,119 @@ async function requestOpenAiAnalysis({ apiKey, model, systemPrompt, article }) {
   };
 }
 
+async function requestDeepAnalysis({ config, systemPrompt, article, repairText = "" }) {
+  const prompt = repairText
+    ? `${systemPrompt}\n\nYour previous answer was invalid for this exact schema. Repair it now. Keep the same grounded analysis, but return valid JSON only.\nPrevious invalid output:\n${repairText.slice(0, 4000)}`
+    : systemPrompt;
+  return config.provider === "openai"
+    ? requestOpenAiAnalysis({ apiKey: config.apiKey, model: config.model, systemPrompt: prompt, article })
+    : requestAnthropicAnalysis({ apiKey: config.apiKey, model: config.model, systemPrompt: prompt, article });
+}
+
 function normalizeEvidence(value) {
   return String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
-export function validateAnalysisResult(result, article) {
-  if (!result || typeof result !== "object" || !Array.isArray(result.findings) || result.findings.length > 2) return false;
-  const articleText = normalizeEvidence([article.headline, article.subheading, article.byline, article.body_text].join(" "));
-  return result.findings.every((finding) => {
-    if (!finding || !["red", "yellow"].includes(finding.severity)) return false;
-    const evidence = normalizeEvidence(finding.evidence);
-    const steps = finding.optimization_steps;
-    return evidence.length >= 8 && articleText.includes(evidence) &&
-      typeof finding.issue_name === "string" && typeof finding.what_is_wrong === "string" &&
-      typeof finding.why_it_hurts === "string" && typeof finding.fix === "string" &&
-      Array.isArray(steps) && steps.length >= 1 && steps.length <= 3 && steps.every((step) => typeof step === "string" && step.trim().length > 0) &&
-      typeof finding.expected_improvement === "string" && finding.expected_improvement.trim().length > 0;
-  });
+function tokenOverlapScore(needle, haystack) {
+  const needleTokens = normalizeEvidence(needle).split(" ").filter(Boolean);
+  if (!needleTokens.length) return 0;
+  const haystackTokens = new Set(normalizeEvidence(haystack).split(" ").filter(Boolean));
+  const matched = needleTokens.filter((token) => haystackTokens.has(token)).length;
+  return matched / needleTokens.length;
 }
 
-export { buildFallbackAnalysis };
+function isGroundedEvidence(item, articleText) {
+  const normalized = normalizeEvidence(item);
+  if (normalized.length < 8) return false;
+  if (articleText.includes(normalized)) return true;
+  return tokenOverlapScore(normalized, articleText) >= 0.8;
+}
+
+function normalizeFinding(finding) {
+  if (!finding || typeof finding !== "object") return null;
+  const evidence = Array.isArray(finding.evidence)
+    ? finding.evidence
+    : typeof finding.evidence === "string" && finding.evidence.trim()
+      ? [finding.evidence.trim()]
+      : [];
+  return {
+    title: String(finding.title || "").trim(),
+    analysis: stripToPlainText(finding.analysis || ""),
+    evidence: evidence.map((item) => stripToPlainText(item)).filter(Boolean).slice(0, 3),
+  };
+}
+
+function normalizeSection(section, fallbackMandate) {
+  if (!section || typeof section !== "object") {
+    return { mandate: fallbackMandate, findings: [] };
+  }
+  const findings = Array.isArray(section.findings)
+    ? section.findings.map(normalizeFinding).filter(Boolean).slice(0, 4)
+    : [];
+  return {
+    mandate: stripToPlainText(section.mandate || fallbackMandate) || fallbackMandate,
+    findings,
+  };
+}
+
+function normalizeModelResult(result) {
+  if (!result || typeof result !== "object") return null;
+  const pageClassification = ["Keep", "Overhaul", "De-index"].includes(result.page_classification)
+    ? result.page_classification
+    : "Overhaul";
+  const normalized = {
+    page_classification: pageClassification,
+    hcs_info_gain: normalizeSection(
+      result.hcs_info_gain,
+      "Google's mandate: Content must provide original reporting, research, or analysis, and must not leave users feeling they need to search again.",
+    ),
+    eeat_trust: normalizeSection(
+      result.eeat_trust,
+      "Google's mandate: High-quality YMYL (Your Money or Your Life) content must be written by experts, cite authoritative primary sources, and demonstrate first-hand experience.",
+    ),
+    spam_scaled_abuse: normalizeSection(
+      result.spam_scaled_abuse,
+      "Google's mandate: Pages must not be generated at scale to manipulate search rankings, nor should they lack depth, real examples, or specific data points.",
+    ),
+    editorial_leadership_recommendation: {
+      summary: stripToPlainText(result.editorial_leadership_recommendation?.summary || ""),
+      immediate_action_required: stripToPlainText(result.editorial_leadership_recommendation?.immediate_action_required || ""),
+      next_steps: Array.isArray(result.editorial_leadership_recommendation?.next_steps)
+        ? result.editorial_leadership_recommendation.next_steps.map((step) => stripToPlainText(step)).filter(Boolean).slice(0, 6)
+        : [],
+    },
+  };
+  return normalized;
+}
+
+function validateFinding(finding, articleText) {
+  if (!finding || typeof finding !== "object") return false;
+  if (typeof finding.title !== "string" || !finding.title.trim()) return false;
+  if (typeof finding.analysis !== "string" || finding.analysis.trim().length < 20) return false;
+  if (!Array.isArray(finding.evidence) || finding.evidence.length < 1 || finding.evidence.length > 3) return false;
+  return finding.evidence.every((item) => isGroundedEvidence(item, articleText));
+}
+
+export function validateAnalysisResult(result, article) {
+  if (!result || typeof result !== "object") return false;
+  if (!["Keep", "Overhaul", "De-index"].includes(result.page_classification)) return false;
+  const articleText = normalizeEvidence([article.headline, article.subheading, article.byline, article.body_text].join(" "));
+  const sections = ["hcs_info_gain", "eeat_trust", "spam_scaled_abuse"];
+  for (const sectionName of sections) {
+    const section = result[sectionName];
+    if (!section || typeof section !== "object") return false;
+    if (typeof section.mandate !== "string" || !section.mandate.trim()) return false;
+    if (!Array.isArray(section.findings) || section.findings.length < 1 || section.findings.length > 4) return false;
+    if (!section.findings.every((finding) => validateFinding(finding, articleText))) return false;
+  }
+  const recommendation = result.editorial_leadership_recommendation;
+  if (!recommendation || typeof recommendation !== "object") return false;
+  if (typeof recommendation.summary !== "string" || recommendation.summary.trim().length < 20) return false;
+  if (typeof recommendation.immediate_action_required !== "string" || !recommendation.immediate_action_required.trim()) return false;
+  if (!Array.isArray(recommendation.next_steps) || recommendation.next_steps.length < 1 || recommendation.next_steps.length > 6) return false;
+  if (!recommendation.next_steps.every((step) => typeof step === "string" && step.trim().length > 0)) return false;
+  return true;
+}
 
 function tryRepairTruncatedJson(text) {
   let base = text;
@@ -372,7 +323,6 @@ export default async function handler(req, res) {
   if (!authResult.valid) return res.status(401).json({ error: authResult.reason });
 
   const article = req.body?.article;
-  const mode = req.body?.mode === "hcs" ? "hcs" : "fe";
   const aiProvider = req.body?.ai_provider === "openai" ? "openai" : "anthropic";
   const aiModel = typeof req.body?.ai_model === "string" ? req.body.ai_model.trim() : "";
   const costProfile = req.body?.cost_profile === "low" ? "low" : "standard";
@@ -393,7 +343,7 @@ export default async function handler(req, res) {
   if (dailyCapError) return res.status(500).json({ error: "Daily cap check failed", detail: dailyCapError.message });
   if (!withinDailyCap) return res.status(429).json({ error: `Daily request cap reached (${DAILY_BUDGET_CAP}/day). Resets at midnight UTC.` });
 
-  const systemPrompt = mode === "hcs" ? SYSTEM_PROMPT_HCS : SYSTEM_PROMPT_FE;
+  const systemPrompt = SYSTEM_PROMPT_AUDIT;
   const config = resolveAiConfig(aiProvider, aiModel, costProfile);
   if (!config.apiKey) {
     return res.status(500).json({ error: `Server misconfigured: ${config.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} not set.` });
@@ -406,55 +356,40 @@ export default async function handler(req, res) {
   };
 
   try {
-    const upstream = config.provider === "openai"
-      ? await requestOpenAiAnalysis({ apiKey: config.apiKey, model: config.model, systemPrompt, article })
-      : await requestAnthropicAnalysis({ apiKey: config.apiKey, model: config.model, systemPrompt, article });
-    const text = upstream.text || "{}";
-    const cleaned = text.replace(/```json|```/g, "").trim();
-
-    let parsed;
+    let upstream = await requestDeepAnalysis({ config, systemPrompt, article });
+    let cleaned = String(upstream.text || "{}").replace(/```json|```/g, "").trim();
+    let parsed = null;
+    let repaired = null;
     try {
       parsed = JSON.parse(cleaned);
-    } catch (e) {
-      const repaired = tryRepairTruncatedJson(cleaned);
-      if (repaired) {
-        repaired._wasTruncated = true;
-        if (!validateAnalysisResult(repaired, article)) {
-          const fallback = buildFallbackAnalysis(article, mode, "The selected model returned an unusable recommendation, so the page was assessed using the product's built-in editorial rules.", {
-            usage: upstream.usage || null,
-            model: config.model,
-            costProfile,
-            provider: config.provider,
-            configSignal,
-          });
-          return res.status(200).json(fallback);
-        }
-        repaired._usage = upstream.usage || null;
-        repaired._model = config.model;
-        repaired._cost_profile = costProfile;
-        repaired._provider = config.provider;
-        repaired._config_signal = configSignal;
-        return res.status(200).json(repaired);
-      }
-      const fallback = buildFallbackAnalysis(article, mode, "The selected model did not return a usable structured recommendation, so the page was assessed using the product's built-in editorial rules.", {
-        usage: upstream.usage || null,
-        model: config.model,
-        costProfile,
-        provider: config.provider,
-        configSignal,
-      });
-      return res.status(200).json(fallback);
+    } catch {
+      repaired = tryRepairTruncatedJson(cleaned);
+      if (repaired) parsed = repaired;
     }
 
+    parsed = normalizeModelResult(parsed);
+
     if (!validateAnalysisResult(parsed, article)) {
-      const fallback = buildFallbackAnalysis(article, mode, "The selected model returned an incomplete recommendation, so the page was assessed using the product's built-in editorial rules.", {
-        usage: upstream.usage || null,
-        model: config.model,
-        costProfile,
-        provider: config.provider,
-        configSignal,
+      upstream = await requestDeepAnalysis({ config, systemPrompt, article, repairText: cleaned });
+      cleaned = String(upstream.text || "{}").replace(/```json|```/g, "").trim();
+      parsed = null;
+      repaired = null;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        repaired = tryRepairTruncatedJson(cleaned);
+        if (repaired) parsed = repaired;
+      }
+    }
+
+    parsed = normalizeModelResult(parsed);
+
+    if (!validateAnalysisResult(parsed, article)) {
+      return res.status(502).json({
+        error: "Analysis request failed",
+        detail: "The selected model did not return the required audit format for this page after two attempts. Please retry the page.",
+        config_signal: configSignal,
       });
-      return res.status(200).json(fallback);
     }
 
     parsed._usage = upstream.usage || null;
@@ -462,24 +397,21 @@ export default async function handler(req, res) {
     parsed._cost_profile = costProfile;
     parsed._provider = config.provider;
     parsed._config_signal = configSignal;
+    if (repaired) parsed._was_truncated = true;
     return res.status(200).json(parsed);
   } catch (e) {
     if (String(e).startsWith("Error: Upstream API error:")) {
       const detail = String(e).replace(/^Error: Upstream API error:\s*/, "").slice(0, 500);
-      const fallback = buildFallbackAnalysis(article, mode, `The selected model could not finish the recommendation (${detail.slice(0, 180)}). The page was assessed using the product's built-in editorial rules instead.`, {
-        model: config.model,
-        costProfile,
-        provider: config.provider,
-        configSignal,
+      return res.status(502).json({
+        error: "Analysis request failed",
+        detail: `The selected model could not complete the audit (${detail.slice(0, 180)}).`,
+        config_signal: configSignal,
       });
-      return res.status(200).json(fallback);
     }
-    const fallback = buildFallbackAnalysis(article, mode, "The analysis service hit an internal issue, so the page was assessed using the product's built-in editorial rules instead.", {
-      model: config.model,
-      costProfile,
-      provider: config.provider,
-      configSignal,
+    return res.status(500).json({
+      error: "Analysis request failed",
+      detail: "The analysis service hit an internal issue before a valid audit could be returned.",
+      config_signal: configSignal,
     });
-    return res.status(200).json(fallback);
   }
 }

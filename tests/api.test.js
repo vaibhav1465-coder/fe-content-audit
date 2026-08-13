@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import test from "node:test";
 import authHandler from "../api/auth.js";
 import { verifyToken } from "../api/_verifyToken.js";
-import { buildFallbackAnalysis, validateAnalysisResult } from "../api/analyze.js";
+import { validateAnalysisResult } from "../api/analyze.js";
 
 function responseRecorder() {
   return {
@@ -55,38 +55,40 @@ test("token verification rejects missing, malformed, and expired credentials", (
 test("analysis validation accepts grounded recommendations and rejects invented evidence", () => {
   const article = { headline: "Rates remain unchanged", body_text: "The central bank kept the policy rate unchanged after its meeting." };
   const result = {
-    findings: [{
-      severity: "yellow",
-      issue_name: "Missing context",
-      evidence: "kept the policy rate unchanged",
-      what_is_wrong: "The article does not explain the decision's effect.",
-      why_it_hurts: "Readers may not understand why the decision matters.",
-      fix: "Add one paragraph explaining the effect on borrowers.",
-      optimization_steps: ["Explain the effect on loan rates.", "Attribute the explanation to a named expert."],
-      expected_improvement: "This will make the article clearer and more useful.",
-    }],
+    page_classification: "Overhaul",
+    hcs_info_gain: {
+      mandate: "Google's mandate: Content must provide original reporting, research, or analysis, and must not leave users feeling they need to search again.",
+      findings: [
+        { title: "Thin explanation", analysis: "The article reports the decision but does not explain what readers should do next.", evidence: ["kept the policy rate unchanged"] },
+        { title: "No added insight", analysis: "The copy stays at announcement level and does not add any deeper interpretation.", evidence: ["policy rate unchanged after its meeting"] },
+      ],
+    },
+    eeat_trust: {
+      mandate: "Google's mandate: High-quality YMYL (Your Money or Your Life) content must be written by experts, cite authoritative primary sources, and demonstrate first-hand experience.",
+      findings: [
+        { title: "Weak trust signals", analysis: "The article body shown here does not cite a primary document or named expert.", evidence: ["kept the policy rate unchanged"] },
+        { title: "Reader impact missing", analysis: "The page does not translate the policy decision into borrower or saver impact.", evidence: ["policy rate unchanged after its meeting"] },
+      ],
+    },
+    spam_scaled_abuse: {
+      mandate: "Google's mandate: Pages must not be generated at scale to manipulate search rankings, nor should they lack depth, real examples, or specific data points.",
+      findings: [
+        { title: "Template-like execution", analysis: "The wording reads like a basic market update without distinctive analysis.", evidence: ["kept the policy rate unchanged"] },
+        { title: "Low data depth", analysis: "No detailed figures or scenario examples are included in the supplied copy.", evidence: ["policy rate unchanged after its meeting"] },
+      ],
+    },
+    editorial_leadership_recommendation: {
+      summary: "This page needs a stronger explanatory layer before it is safe as a high-value search asset.",
+      immediate_action_required: "Rewrite with reader-impact context and primary-source support.",
+      next_steps: ["Add the central bank source document.", "Explain the borrower and saver impact.", "Include one quoted analyst view."],
+    },
   };
   assert.equal(validateAnalysisResult(result, article), true);
-  assert.equal(validateAnalysisResult({ ...result, findings: [{ ...result.findings[0], evidence: "invented quotation" }] }, article), false);
-});
-
-test("fallback analysis always returns a usable recommendation shape", () => {
-  const article = {
-    headline: "Markets react to new guidance",
-    subheading: "Experts say investors should watch policy signals",
-    byline: "FE Bureau",
-    body_text: "Markets react to new guidance. Analysts said investors should watch policy signals closely. According to exchange data, volumes rose 12% after the announcement.",
-  };
-
-  const feResult = buildFallbackAnalysis(article, "fe", "Model output was unusable.");
-  assert.equal(Array.isArray(feResult.findings), true);
-  assert.equal(feResult.findings.length >= 1, true);
-  assert.equal(typeof feResult.bottom_line, "string");
-  assert.equal(feResult._fallback, true);
-
-  const hcsResult = buildFallbackAnalysis(article, "hcs", "Model output was unusable.");
-  assert.equal(Array.isArray(hcsResult.findings), true);
-  assert.equal(hcsResult.findings.length >= 1, true);
-  assert.equal(typeof hcsResult.bottom_line, "string");
-  assert.equal(hcsResult._fallback, true);
+  assert.equal(validateAnalysisResult({
+    ...result,
+    hcs_info_gain: {
+      ...result.hcs_info_gain,
+      findings: [{ ...result.hcs_info_gain.findings[0], evidence: ["invented quotation"] }, result.hcs_info_gain.findings[1]],
+    },
+  }, article), false);
 });
