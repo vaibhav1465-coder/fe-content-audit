@@ -879,23 +879,23 @@ function App() {
         url: a?.url,
         byline: a?.byline,
         publish_date: a?.publish_date,
-        verdict: r.page_classification || (r._failed ? "Retry" : ""),
+        verdict: r.action_tag || r.page_classification || (r._failed ? "Retry" : ""),
         top_finding: r.hcs_info_gain?.findings?.[0]?.title || r.error || "",
         evidence: r.hcs_info_gain?.findings?.[0]?.evidence?.join(" | ") || "",
         why_it_hurts: r.editorial_leadership_recommendation?.summary || r.error || "",
         fix: r.editorial_leadership_recommendation?.immediate_action_required || "",
         optimization_steps: r.editorial_leadership_recommendation?.next_steps?.join(" | ") || "",
         expected_improvement: "",
-        ymyl_score: "",
-        experience: "",
-        expertise: "",
-        authoritativeness: "",
-        trustworthiness: "",
-        information_gain_score: "",
-        spam_risk: "",
+        ymyl_score: r.tier || "",
+        experience: r.eeat_trust?.findings?.[0]?.analysis || "",
+        expertise: r.eeat_trust?.findings?.[0]?.title || "",
+        authoritativeness: r.editorial_leadership_recommendation?.editorial_flag || "",
+        trustworthiness: r.unscorable || "",
+        information_gain_score: r.hcs_info_gain?.findings?.[0]?.analysis || "",
+        spam_risk: r.spam_scaled_abuse?.findings?.[0]?.title || "",
         word_count: "",
-        source_signals: "",
-        expert_signals: "",
+        source_signals: r.data_availability || "",
+        expert_signals: r.action_tag || "",
         input_tokens: r._usage?.input_tokens ?? "",
         output_tokens: r._usage?.output_tokens ?? "",
       };
@@ -1085,16 +1085,21 @@ function App() {
           </div>
           {resultEntries.map(([id, r]) => {
             const a = Object.values(segmentArticles).flat().find((x) => x.id === id);
-            const badgeLabel = r.page_classification || (r._failed ? "Retry" : "");
+            const badgeLabel = r.action_tag || r.page_classification || (r._failed ? "Retry" : "");
             const isBad = badgeLabel === "De-index";
-            const isMid = badgeLabel === "Overhaul" || badgeLabel === "Retry";
+            const isMid = badgeLabel === "Overhaul" || badgeLabel === "Retry" || /REWORK|NOINDEX|301 REDIRECT/i.test(badgeLabel);
             return (
               <div key={id} style={{ border: `1px solid ${C.hairline}`, borderRadius: "12px", padding: "14px 16px", marginBottom: "10px" }}>
                 <div className="result-header">
                   <p style={{ fontWeight: 700, fontSize: "14px", margin: 0 }}>{a?.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: C.linkBlue }}>{a.headline}</a> : a?.headline}</p>
                   <span style={{ fontSize: "12px", padding: "3px 12px", borderRadius: "90px", background: isBad ? C.errorTint : isMid ? C.warnTint : C.successTint, color: isBad ? C.error : isMid ? C.warn : C.success, fontWeight: 700, whiteSpace: "nowrap" }}>{badgeLabel}</span>
                 </div>
-                <p style={{ ...st.caption, margin: "4px 0 10px" }}>{a?.byline || "No byline"} - {formatDate(a?.publish_date)}</p>
+                <p style={{ ...st.caption, margin: "4px 0 6px" }}>{a?.byline || "No byline"} - {formatDate(a?.publish_date)}</p>
+                <p style={{ ...st.caption, margin: "0 0 10px" }}>
+                  {r.tier ? `Tier: ${r.tier}` : "Tier: Not set"}{" · "}
+                  {r.data_availability ? `Data: ${r.data_availability}` : "Data: Not set"}
+                  {r.unscorable && r.unscorable !== "NONE" ? ` · ${r.unscorable}` : ""}
+                </p>
                 {r._model && <p style={st.caption}>Model used: {r._model}{r._provider ? ` via ${r._provider}` : ""}{r._cost_profile ? ` (${r._cost_profile} cost profile)` : ""}</p>}
                 {r._usage && <p style={st.caption}>API usage: {r._usage.input_tokens || 0} input tokens, {r._usage.output_tokens || 0} output tokens.</p>}
                 {r._failed ? (
@@ -1133,6 +1138,9 @@ function App() {
                     <p style={{ fontWeight: 700, margin: "18px 0 6px" }}>RECOMMENDATION FOR EDITORIAL LEADERSHIP</p>
                     <p style={{ margin: "0 0 8px" }}>{r.editorial_leadership_recommendation?.summary}</p>
                     <p style={{ margin: "0 0 6px" }}><strong>Immediate Action Required:</strong> {r.editorial_leadership_recommendation?.immediate_action_required}</p>
+                    {r.editorial_leadership_recommendation?.editorial_flag && r.editorial_leadership_recommendation?.editorial_flag !== "NONE" && (
+                      <p style={{ margin: "0 0 6px" }}><strong>Editorial Flag:</strong> {r.editorial_leadership_recommendation?.editorial_flag}</p>
+                    )}
                     <p style={{ margin: "0 0 4px" }}><strong>If Rewriting:</strong></p>
                     <ol style={{ margin: "6px 0 0", paddingLeft: "20px" }}>
                       {(r.editorial_leadership_recommendation?.next_steps || []).map((step, index) => <li key={index}>{step}</li>)}

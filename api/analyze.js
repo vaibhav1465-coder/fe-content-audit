@@ -6,140 +6,74 @@ import { createClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
 import { verifyToken } from "./_verifyToken.js";
 
-const SYSTEM_PROMPT_AUDIT = `You are the Elite SEO Content Quality & Core Algorithm Auditor for Financial Express. The primary audience is SEO leadership, and the secondary audience is editorial leadership. Evaluate ONLY what is actually present in the supplied article. Never guess, never flatter, never hallucinate, and never use outside conversational context.
+const SYSTEM_PROMPT_AUDIT = `You are the FE Content Portfolio Audit and Remediation System, adapted from the FE Master Prompt v4.0 package.
 
-GOOGLE CONTEXT: Helpful Content System is integrated into core ranking. Spam enforcement heavily targets scaled content abuse, site reputation abuse, and unoriginal aggregation. Your job is to identify whether the page is original, useful, trustworthy, and safe for the wider domain quality signal.
+You are auditing a Financial Express article for:
+1. Helpful Content System and information gain
+2. E-E-A-T and trust
+3. Google spam / scaled abuse risk
+4. Editorial action recommendation
 
-NON-NEGOTIABLE RULES:
-1. Every criticism must be grounded in the supplied article.
-2. Use specific evidence excerpts copied from the supplied headline, subheading, byline, or body text.
-3. Do not claim a missing source, missing expertise, or missing case study unless the article truly does not show it.
-4. Use a professional, leadership-ready tone. Critical is allowed. Insulting is forbidden.
-5. Do not mention rankings, traffic gains, or external FE history unless it directly follows from the supplied PRD logic.
-6. Output must match the JSON schema exactly. No markdown fences. No text outside JSON.
+Critical rules:
+- Evaluate ONLY what is present in the supplied article package.
+- No web browsing. No external fetching assumptions.
+- Never invent quotes, credentials, or sources.
+- If evidence is unavailable, say it is unavailable instead of guessing.
+- Be practical, direct, and editorially useful.
+- Focus on genuine recommendations first, rigid formatting second.
 
-RETURN THIS EXACT JSON SHAPE:
-{
-  "page_classification": "Keep|Overhaul|De-index",
-  "hcs_info_gain": {
-    "mandate": "Google's mandate: Content must provide original reporting, research, or analysis, and must not leave users feeling they need to search again.",
-    "findings": [
-      {
-        "title": "short title",
-        "analysis": "2-4 sentence grounded analysis",
-        "evidence": ["short verbatim excerpt 1", "short verbatim excerpt 2"]
-      }
-    ]
-  },
-  "eeat_trust": {
-    "mandate": "Google's mandate: High-quality YMYL (Your Money or Your Life) content must be written by experts, cite authoritative primary sources, and demonstrate first-hand experience.",
-    "findings": [
-      {
-        "title": "short title",
-        "analysis": "2-4 sentence grounded analysis",
-        "evidence": ["short verbatim excerpt 1", "short verbatim excerpt 2"]
-      }
-    ]
-  },
-  "spam_scaled_abuse": {
-    "mandate": "Google's mandate: Pages must not be generated at scale to manipulate search rankings, nor should they lack depth, real examples, or specific data points.",
-    "findings": [
-      {
-        "title": "short title",
-        "analysis": "2-4 sentence grounded analysis",
-        "evidence": ["short verbatim excerpt 1", "short verbatim excerpt 2"]
-      }
-    ]
-  },
-  "editorial_leadership_recommendation": {
-    "summary": "2-4 sentence leadership-ready summary",
-    "immediate_action_required": "short action line",
-    "next_steps": ["clear next step 1", "clear next step 2", "clear next step 3"]
-  }
-}
+Data availability rules:
+- If full article text is provided, treat as FULL.
+- If only short summary/excerpt exists, treat as SUMMARY and avoid quote-heavy claims.
+- If only metadata exists, mark limitations clearly.
 
-QUALITY BAR:
-- Each section must have 2 to 4 findings.
-- Each finding must be materially different.
-- Prefer depth over filler.
-- If the article is strong in a section, say so directly and explain why with evidence.
-- Use plain business language, not vague SEO jargon.`;
+Use FE v4.0 logic:
+- Assign a tier: T1 / T2 / T3
+- Use one action tag only: [ACTION: RETAIN], [ACTION: REWORK], [ACTION: NOINDEX], [ACTION: DELETE — 410], [ACTION: 301 REDIRECT], or [NOT APPLICABLE]
+- Flag unscorable content only when truly necessary
+- Use the rework priority sequence where relevant:
+  1. Data clarity
+  2. Headline & excerpt
+  3. Freshness
+  4. Strengthen YMYL trust
+  5. Source conflicts
+  6. Original reporting
+  7. Author credentials
 
-const SYSTEM_PROMPT_FORMATTER = `You are the final response formatter for FE Content Audit.
+Return plain text in this exact structure:
 
-Your job is to take a raw audit draft and convert it into the exact JSON schema required by the application.
-
-RULES:
-1. Use only evidence that appears in the supplied article context or the supplied raw audit draft.
-2. Never invent evidence.
-3. If the draft is partial, salvage the strongest grounded findings instead of failing.
-4. Keep the output concise, professional, and in valid JSON only.
-5. Return at least 1 grounded finding per section when possible.
-6. No markdown fences. No commentary outside JSON.
-
-RETURN THIS EXACT JSON SHAPE:
-{
-  "page_classification": "Keep|Overhaul|De-index",
-  "hcs_info_gain": {
-    "mandate": "Google's mandate: Content must provide original reporting, research, or analysis, and must not leave users feeling they need to search again.",
-    "findings": [
-      { "title": "short title", "analysis": "grounded analysis", "evidence": ["verbatim excerpt 1"] }
-    ]
-  },
-  "eeat_trust": {
-    "mandate": "Google's mandate: High-quality YMYL (Your Money or Your Life) content must be written by experts, cite authoritative primary sources, and demonstrate first-hand experience.",
-    "findings": [
-      { "title": "short title", "analysis": "grounded analysis", "evidence": ["verbatim excerpt 1"] }
-    ]
-  },
-  "spam_scaled_abuse": {
-    "mandate": "Google's mandate: Pages must not be generated at scale to manipulate search rankings, nor should they lack depth, real examples, or specific data points.",
-    "findings": [
-      { "title": "short title", "analysis": "grounded analysis", "evidence": ["verbatim excerpt 1"] }
-    ]
-  },
-  "editorial_leadership_recommendation": {
-    "summary": "leadership-ready summary",
-    "immediate_action_required": "short action line",
-    "next_steps": ["clear next step 1", "clear next step 2"]
-  }
-}`;
-
-const SYSTEM_PROMPT_NATURAL_AUDIT = `You are the Elite SEO Content Quality & Core Algorithm Auditor for Financial Express.
-
-Give a grounded, plain-language audit of the supplied article. Do not use JSON. Do not use markdown fences. Use only what is present in the article.
-
-Return the audit in this exact easy-to-parse text structure:
-
-CLASSIFICATION: Keep|Overhaul|De-index
+TIER: T1|T2|T3
+DATA AVAILABILITY: FULL|SUMMARY|METADATA ONLY
+UNSCORABLE: NONE | [UNSCORABLE: ...]
+ACTION TAG: [ACTION: RETAIN|REWORK|NOINDEX|DELETE — 410|301 REDIRECT|NOT APPLICABLE]
 
 HCS & INFORMATION GAIN
-- Title: short title
-  Analysis: grounded explanation in 2-4 sentences
-  Evidence: verbatim excerpt from article
+Core Issue: one-line finding
+Evidence: grounded evidence from the article, or [Quote unavailable — summary input]
+Verdict: Pass|Partial|Fail
+Analysis: 2-4 sentence practical explanation
 
 E-E-A-T & TRUST
-- Title: short title
-  Analysis: grounded explanation in 2-4 sentences
-  Evidence: verbatim excerpt from article
+Core Issue: one-line finding
+Evidence: grounded evidence from the article, or [Unverifiable]
+Verdict: Pass|Partial|Fail
+Analysis: 2-4 sentence practical explanation
 
-SPAM & SCALED ABUSE
-- Title: short title
-  Analysis: grounded explanation in 2-4 sentences
-  Evidence: verbatim excerpt from article
+GOOGLE SPAM POLICIES
+Core Issue: one-line finding
+Evidence: grounded evidence from the article
+Verdict: Pass|Partial|Fail
+Analysis: 2-4 sentence practical explanation
 
 EDITORIAL RECOMMENDATION
-Summary: leadership-ready summary
-Immediate action: short action line
+Core Issue: one-line summary
+Ideally: short action line
+Editorial Flag: optional one-line note, or NONE
 Next steps:
 1. clear next step
 2. clear next step
+3. clear next step`;
 
-Rules:
-- Provide 1 to 3 findings per section.
-- If the article is strong, say so directly.
-- Never invent evidence.
-- Keep the wording practical and authentic.`;
 
 let supabase = null;
 if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -171,11 +105,19 @@ function buildUserPrompt(article) {
   const publishDate = String(article.publish_date || "(missing)").slice(0, 100);
   const segment = String(article.segment || "(missing)").slice(0, 100);
   const bodyText = String(article.body_text || "").slice(0, MAX_BODY_TEXT_CHARS);
-  return `Headline: ${headline}\nSubheading: ${subheading}\nByline: ${byline}\nPublish date: ${publishDate}\nSegment: ${segment}\nBody text: ${bodyText}`;
+  const dataAvailability = deriveDataAvailability(article);
+  return `Headline: ${headline}\nSubheading: ${subheading}\nByline: ${byline}\nPublish date: ${publishDate}\nSegment: ${segment}\nData availability: ${dataAvailability}\nBody text: ${bodyText}`;
 }
 
 function buildFormatterPrompt(article, rawDraft) {
   return `${buildUserPrompt(article)}\n\nRaw audit draft to salvage and reformat:\n${String(rawDraft || "").slice(0, 5000)}`;
+}
+
+function deriveDataAvailability(article) {
+  const bodyLength = String(article?.body_text || "").trim().length;
+  if (bodyLength >= 500) return "FULL";
+  if (bodyLength >= 100) return "SUMMARY";
+  return "METADATA ONLY";
 }
 
 function validateArticleInput(article) {
@@ -321,13 +263,25 @@ function normalizeSection(section, fallbackMandate) {
   };
 }
 
+function mapActionTagToClassification(actionTag) {
+  const tag = String(actionTag || "").toUpperCase();
+  if (tag.includes("RETAIN")) return "Keep";
+  if (tag.includes("REWORK")) return "Overhaul";
+  if (tag.includes("NOINDEX") || tag.includes("DELETE") || tag.includes("301 REDIRECT")) return "De-index";
+  return "Overhaul";
+}
+
 function normalizeModelResult(result) {
   if (!result || typeof result !== "object") return null;
   const pageClassification = ["Keep", "Overhaul", "De-index"].includes(result.page_classification)
     ? result.page_classification
-    : "Overhaul";
+    : mapActionTagToClassification(result.action_tag);
   const normalized = {
     page_classification: pageClassification,
+    action_tag: stripToPlainText(result.action_tag || ""),
+    tier: stripToPlainText(result.tier || ""),
+    data_availability: stripToPlainText(result.data_availability || ""),
+    unscorable: stripToPlainText(result.unscorable || "NONE"),
     hcs_info_gain: normalizeSection(
       result.hcs_info_gain,
       "Google's mandate: Content must provide original reporting, research, or analysis, and must not leave users feeling they need to search again.",
@@ -343,6 +297,7 @@ function normalizeModelResult(result) {
     editorial_leadership_recommendation: {
       summary: stripToPlainText(result.editorial_leadership_recommendation?.summary || ""),
       immediate_action_required: stripToPlainText(result.editorial_leadership_recommendation?.immediate_action_required || ""),
+      editorial_flag: stripToPlainText(result.editorial_leadership_recommendation?.editorial_flag || "NONE"),
       next_steps: Array.isArray(result.editorial_leadership_recommendation?.next_steps)
         ? result.editorial_leadership_recommendation.next_steps.map((step) => stripToPlainText(step)).filter(Boolean).slice(0, 6)
         : [],
@@ -426,7 +381,10 @@ function parseCandidateJson(text) {
 function parseNaturalAuditToResult(text) {
   const raw = String(text || "").replace(/\r/g, "").trim();
   if (!raw) return null;
-  const classification = raw.match(/CLASSIFICATION:\s*(Keep|Overhaul|De-index)/i)?.[1] || "Overhaul";
+  const tier = raw.match(/TIER:\s*(T1|T2|T3)/i)?.[1] || "";
+  const dataAvailability = raw.match(/DATA AVAILABILITY:\s*(FULL|SUMMARY|METADATA ONLY)/i)?.[1] || "";
+  const unscorable = raw.match(/UNSCORABLE:\s*(.+)/i)?.[1]?.trim() || "NONE";
+  const actionTag = raw.match(/ACTION TAG:\s*(.+)/i)?.[1]?.trim() || "[ACTION: REWORK]";
   const sectionChunk = (start, endList) => {
     const startRegex = new RegExp(start, "i");
     const startMatch = raw.match(startRegex);
@@ -445,27 +403,27 @@ function parseNaturalAuditToResult(text) {
   };
   const parseFindings = (chunk) => {
     if (!chunk) return [];
-    const items = chunk.split(/\n(?=-\s*Title:)/).map((part) => part.trim()).filter(Boolean);
-    return items.map((item, index) => {
-      const title = item.match(/-+\s*Title:\s*(.+)/i)?.[1]?.trim()
-        || item.match(/^([^\n:]{3,120})/i)?.[1]?.trim()
-        || `Finding ${index + 1}`;
-      const analysis = item.match(/Analysis:\s*([\s\S]*?)(?:\n\s*Evidence:|$)/i)?.[1]?.trim() || item.trim();
-      const evidenceLine = item.match(/Evidence:\s*([\s\S]*?)$/i)?.[1]?.trim() || "";
-      const evidence = evidenceLine
-        ? evidenceLine.split(/\s*\|\s*|;\s*/).map((part) => stripToPlainText(part)).filter(Boolean).slice(0, 3)
-        : [];
-      return { title, analysis, evidence };
-    }).filter((finding) => finding.analysis);
+    const title = chunk.match(/Core Issue:\s*([\s\S]*?)(?:\nEvidence:|$)/i)?.[1]?.trim() || "Audit finding";
+    const evidenceLine = chunk.match(/Evidence:\s*([\s\S]*?)(?:\nVerdict:|$)/i)?.[1]?.trim() || "";
+    const verdict = chunk.match(/Verdict:\s*(Pass|Partial|Fail)/i)?.[1]?.trim() || "";
+    const analysis = chunk.match(/Analysis:\s*([\s\S]*?)$/i)?.[1]?.trim() || "";
+    const evidence = evidenceLine
+      ? evidenceLine.split(/\s*\|\s*|;\s*/).map((part) => stripToPlainText(part)).filter(Boolean).slice(0, 3)
+      : [];
+    const combinedAnalysis = [verdict ? `Verdict: ${verdict}.` : "", analysis].filter(Boolean).join(" ");
+    return combinedAnalysis || title ? [{ title, analysis: combinedAnalysis || title, evidence }] : [];
   };
 
-  const hcsChunk = sectionChunk("HCS\\s*&\\s*INFORMATION\\s*GAIN", ["E-E-A-T\\s*&\\s*TRUST", "SPAM\\s*&\\s*SCALED\\s*ABUSE", "EDITORIAL\\s*RECOMMENDATION"]);
-  const eeatChunk = sectionChunk("E-E-A-T\\s*&\\s*TRUST", ["SPAM\\s*&\\s*SCALED\\s*ABUSE", "EDITORIAL\\s*RECOMMENDATION"]);
-  const spamChunk = sectionChunk("SPAM\\s*&\\s*SCALED\\s*ABUSE", ["EDITORIAL\\s*RECOMMENDATION"]);
+  const hcsChunk = sectionChunk("HCS\\s*&\\s*INFORMATION\\s*GAIN", ["E-E-A-T\\s*&\\s*TRUST", "GOOGLE\\s*SPAM\\s*POLICIES", "EDITORIAL\\s*RECOMMENDATION"]);
+  const eeatChunk = sectionChunk("E-E-A-T\\s*&\\s*TRUST", ["GOOGLE\\s*SPAM\\s*POLICIES", "EDITORIAL\\s*RECOMMENDATION"]);
+  const spamChunk = sectionChunk("GOOGLE\\s*SPAM\\s*POLICIES", ["EDITORIAL\\s*RECOMMENDATION"]);
   const recommendationChunk = sectionChunk("EDITORIAL\\s*RECOMMENDATION", []);
 
   return normalizeModelResult({
-    page_classification: classification,
+    action_tag: actionTag,
+    tier,
+    data_availability: dataAvailability,
+    unscorable,
     hcs_info_gain: {
       mandate: "Google's mandate: Content must provide original reporting, research, or analysis, and must not leave users feeling they need to search again.",
       findings: parseFindings(hcsChunk),
@@ -479,8 +437,9 @@ function parseNaturalAuditToResult(text) {
       findings: parseFindings(spamChunk),
     },
     editorial_leadership_recommendation: {
-      summary: recommendationChunk.match(/Summary:\s*([\s\S]*?)(?:\nImmediate action:|$)/i)?.[1]?.trim() || "",
-      immediate_action_required: recommendationChunk.match(/Immediate action:\s*([\s\S]*?)(?:\nNext steps:|$)/i)?.[1]?.trim() || "",
+      summary: recommendationChunk.match(/Core Issue:\s*([\s\S]*?)(?:\nIdeally:|$)/i)?.[1]?.trim() || "",
+      immediate_action_required: recommendationChunk.match(/Ideally:\s*([\s\S]*?)(?:\nEditorial Flag:|$)/i)?.[1]?.trim() || "",
+      editorial_flag: recommendationChunk.match(/Editorial Flag:\s*([\s\S]*?)(?:\nNext steps:|$)/i)?.[1]?.trim() || "NONE",
       next_steps: Array.from(recommendationChunk.matchAll(/\n?\s*\d+\.\s*(.+)/g)).map((match) => stripToPlainText(match[1])).filter(Boolean).slice(0, 6),
     },
   });
@@ -532,20 +491,15 @@ export default async function handler(req, res) {
 
   try {
     let upstream = await requestDeepAnalysis({ config, systemPrompt, article, maxTokens: 1100 });
-    let { parsed, repaired, cleaned } = parseCandidateJson(upstream.text || "{}");
-    parsed = normalizeModelResult(parsed);
+    let repaired = false;
+    let cleaned = String(upstream.text || "").trim();
+    let parsed = parseNaturalAuditToResult(cleaned);
 
     if (!validateAnalysisResult(parsed, article)) {
-      const formatterPrompt = buildFormatterPrompt(article, upstream.text || "");
-      upstream = await requestDeepAnalysis({
-        config,
-        systemPrompt: SYSTEM_PROMPT_FORMATTER,
-        article,
-        userPrompt: formatterPrompt,
-        maxTokens: 900,
-      });
-      ({ parsed, repaired, cleaned } = parseCandidateJson(upstream.text || "{}"));
-      parsed = normalizeModelResult(parsed);
+      const jsonCandidate = parseCandidateJson(cleaned || "{}");
+      repaired = jsonCandidate.repaired;
+      cleaned = jsonCandidate.cleaned;
+      parsed = normalizeModelResult(jsonCandidate.parsed);
     }
 
     if (!validateAnalysisResult(parsed, article)) {
@@ -554,20 +508,16 @@ export default async function handler(req, res) {
         systemPrompt,
         article,
         repairText: cleaned || String(upstream.text || "").slice(0, 4000),
-        maxTokens: 950,
-      });
-      ({ parsed, repaired, cleaned } = parseCandidateJson(upstream.text || "{}"));
-      parsed = normalizeModelResult(parsed);
-    }
-
-    if (!validateAnalysisResult(parsed, article)) {
-      upstream = await requestDeepAnalysis({
-        config,
-        systemPrompt: SYSTEM_PROMPT_NATURAL_AUDIT,
-        article,
         maxTokens: 1000,
       });
-      parsed = parseNaturalAuditToResult(upstream.text || "");
+      cleaned = String(upstream.text || "").trim();
+      parsed = parseNaturalAuditToResult(cleaned);
+      if (!validateAnalysisResult(parsed, article)) {
+        const jsonCandidate = parseCandidateJson(cleaned || "{}");
+        repaired = repaired || jsonCandidate.repaired;
+        cleaned = jsonCandidate.cleaned;
+        parsed = normalizeModelResult(jsonCandidate.parsed);
+      }
     }
 
     if (!validateAnalysisResult(parsed, article)) {
